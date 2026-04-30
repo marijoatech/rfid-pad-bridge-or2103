@@ -16,6 +16,12 @@ header("Content-Type: application/json; charset=utf-8");
 
 $accion = $_REQUEST['action'] ?? null;
 
+if (!function_exists('str_starts_with')) {
+    function str_starts_with($haystack, $needle) {
+        return strpos($haystack, $needle) === 0;
+    }
+}
+
 if (!$accion) {
     error("Parametro 'action' requerido");
 }
@@ -32,12 +38,7 @@ $acciones = [
 if (!isset($acciones[$accion])) {
     error("Accion no permitida: " . $accion);
 }
-
-if (!function_exists('str_starts_with')) {
-    function str_starts_with($haystack, $needle) {
-        return strpos($haystack, $needle) === 0;
-    }
-}
+ 
 
 $baseDir   = realpath(__DIR__);
 $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
