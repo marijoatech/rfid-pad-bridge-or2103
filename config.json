@@ -1,0 +1,15 @@
+{
+  "windows": {
+    "com": "COM5",
+    "baudrate": 115200,
+    "timeout_ms": 3000,
+    "access_pwd": "00000000",
+    "power": 10
+  },
+  "linux": {
+    "port": "/dev/ttyUSB0",
+    "baudrate": 115200,
+    "timeout_ms": 3000,
+    "power": 10
+  }
+}

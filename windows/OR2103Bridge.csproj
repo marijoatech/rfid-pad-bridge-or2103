@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>OR2103Bridge</AssemblyName>
+    <RootNamespace>OR2103Bridge</RootNamespace>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Copiar OR2127LIB.dll a esta carpeta y ajustar HintPath si hace falta -->
+    <Reference Include="OR2127LIB">
+      <HintPath>OR2127LIB.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
