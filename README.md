@@ -35,6 +35,25 @@ se solicita una operación.
 > La instalación prepara dependencias, permisos y acceso HTTP. No corrige los
 > problemas pendientes del protocolo ni garantiza una lectura física exitosa.
 
+## Ayuda visual en el navegador
+
+Abre [la guía del bridge](http://localhost/rfid-bridge/PADBridge.php) sin
+parámetros. Muestra las seis acciones, ejemplos de parámetros y respuestas,
+el relleno del EPC y enlaces para consultar o leer. La guía no envía comandos
+al pad al cargarse. Los ejemplos de escritura y borrado son texto informativo.
+
+- Un GET sin `action` que acepte HTML muestra la guía. `?help=1` permite abrirla
+  explícitamente.
+- Una petición con `action` devuelve JSON, también desde el navegador.
+- POST, curl y las peticiones que solo aceptan JSON conservan la respuesta de
+  error JSON cuando falta `action`. El instalador sigue usando esta respuesta.
+- `?format=json` fuerza JSON en la URL sin acción, incluso en el navegador.
+
+`PADBridge.php` es el punto de entrada. La lógica de la API está en
+`lib/Bridge.php`; la vista en `views/help.php` y sus estilos en `assets/help.css`.
+Los controladores del pad siguen en `linux/` y `windows/`. Esta organización
+no elimina funciones ni cambia las llamadas de Marijoa.
+
 ## Qué hace el instalador
 
 - Instala `python3`, `python3-serial`, `php-cli` y `curl` mediante APT.

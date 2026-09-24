@@ -1,4 +1,4 @@
-"""HTTP real contra PHP CLI; solo entradas rechazadas antes de ejecutar el bridge."""
+"""HTTP real contra PHP CLI: ayuda y errores; sin ejecutar operaciones del lector."""
 import json
 import pathlib
 import shutil
@@ -65,8 +65,54 @@ class HttpTests(unittest.TestCase):
                     self.assertNotEqual(data["exit_code"], 0)
                     self.assertIn("stderr", data)
 
+    def test_browser_without_action_gets_visual_help(self):
+        request = urllib.request.Request(self.url, headers={"Accept": "text/html,application/xhtml+xml"})
+        with urllib.request.urlopen(request, timeout=3) as response:
+            self.assertEqual(response.status, 200)
+            self.assertIn("text/html", response.headers["Content-Type"])
+            self.assertIn("Accept", response.headers["Vary"])
+            html = response.read().decode("utf-8")
+        for action in ("read-epc", "inventory", "status", "write-epc", "clear", "version"):
+            self.assertIn("?action=" + action, html)
+        self.assertIn("000000000000000000130527", html)
+        self.assertIn('lang="es"', html)
+        self.assertNotIn('href="PADBridge.php?action=write-epc', html)
+        self.assertNotIn('href="PADBridge.php?action=clear', html)
+        with urllib.request.urlopen(self.url.replace("PADBridge.php", "assets/help.css"), timeout=3) as response:
+            self.assertEqual(response.status, 200)
+            self.assertIn(b"@media", response.read())
+
+    def test_explicit_help_does_not_require_browser_accept(self):
+        request = urllib.request.Request(self.url + "?help=1", headers={"Accept": "application/json"})
+        with urllib.request.urlopen(request, timeout=3) as response:
+            self.assertIn("text/html", response.headers["Content-Type"])
+
+    def test_json_clients_and_explicit_actions_keep_json(self):
+        cases = [
+            ("GET", "", "application/json", "ACTION_REQUIRED"),
+            ("GET", "", "*/*", "ACTION_REQUIRED"),
+            ("GET", "", "text/html;q=0, application/json", "ACTION_REQUIRED"),
+            ("GET", "format=json", "text/html", "ACTION_REQUIRED"),
+            ("POST", "", "text/html", "ACTION_REQUIRED"),
+            ("POST", "help=1", "text/html", "ACTION_REQUIRED"),
+            ("GET", "action=&help=1", "text/html", "ACTION_REQUIRED"),
+            ("GET", "action[]=read-epc&help=1", "text/html", "ACTION_INVALID"),
+            ("GET", "action=invalid&help=1", "text/html", "UNKNOWN_ACTION"),
+            ("GET", "action=write-epc&epc=XYZ", "text/html", "EPC_INVALID_HEX"),
+            ("GET", "help[]=1", "application/json", "ACTION_REQUIRED"),
+        ]
+        for method, query, accept, code in cases:
+            with self.subTest(method=method, query=query, accept=accept):
+                request = urllib.request.Request(self.url + "?" + query, headers={"Accept": accept}, method=method)
+                with urllib.request.urlopen(request, timeout=3) as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertIn("application/json", response.headers["Content-Type"])
+                    data = json.load(response)
+                self.assertIs(data["ok"], False)
+                self.assertEqual(data["resultado"], "ERROR=" + code)
+
     def test_options_does_not_execute_an_operation(self):
-        request = urllib.request.Request(self.url, method="OPTIONS")
+        request = urllib.request.Request(self.url + "?help=1", headers={"Accept": "text/html"}, method="OPTIONS")
         with urllib.request.urlopen(request, timeout=3) as response:
             self.assertEqual(response.status, 204)
             self.assertEqual(response.read(), b"")
