@@ -7,10 +7,12 @@ En Windows usa `OR2127LIB.dll`; en Linux, Python y un puerto serial USB.
 repositorio porque su comunicación es diferente. En cada máquina, el proyecto
 elegido se instala siempre en **`/var/www/html/rfid-bridge`**.
 
-## Instalación rápida en una máquina Linux Mint nueva
+## Instalación rápida en una máquina Linux Mint o Debian nueva
 
 Requisitos: **Apache y PHP ya funcionando**, acceso a Internet, Git, permisos
-`sudo` y el pad OR2103 conectado por USB. Desde una terminal:
+`sudo` y el pad OR2103 con su **selector inferior en USB**. Coloca el selector
+en USB antes de conectar el pad; si estaba conectado en HID, desconéctalo,
+cambia el selector a USB y vuelve a conectarlo. Desde una terminal:
 
 ```bash
 cd /var/www/html
@@ -57,12 +59,29 @@ Esta opción configura permisos; no cambia el usuario de Apache ni del pool.
 
 ## Puerto USB de cada máquina
 
+Este bridge utiliza un **puerto serial USB** y no implementa el modo HID del
+pad. Si el selector está en HID, el dispositivo puede no aparecer como puerto
+serial y la lectura fallará al intentar abrir `/dev/ttyUSB0`.
+
 El puerto predeterminado es `/dev/ttyUSB0`. Si no existe, el instalador lista
 los puertos disponibles y explica cómo continuar. También puedes listarlos:
 
 ```bash
 python3 -m serial.tools.list_ports -v
 ```
+
+En la prueba de lectura realizada en Debian, el pad apareció como:
+
+```text
+/dev/ttyUSB0
+    desc: CP2102 USB to UART Bridge Controller
+    hwid: USB VID:PID=10C4:EA60
+```
+
+La lectura mediante Apache devolvió `DETECTED=...`, código de salida `0` y
+`stderr` vacío. Identifica el puerto en cada máquina; el nombre puede cambiar.
+Los puertos `ttyS0`, `ttyS1`, etc. que figuren en el listado no deben elegirse
+por ser los primeros: busca el dispositivo USB correspondiente al pad.
 
 Para configurar un puerto diferente durante la instalación:
 
@@ -176,7 +195,7 @@ Pendientes de corrección:
 | --- | --- |
 | Puerto inexistente | USB conectado y puerto correcto; vuelve a instalar indicando `--port` |
 | `Permission denied` | Usuario real de PHP, grupo `dialout` y reinicio de Apache/PHP-FPM |
-| No aparece ningún puerto | Cable, conexión USB y reconocimiento del dispositivo por Linux |
+| No aparece el puerto USB del pad | Selector inferior en USB; desconecta y reconecta si estaba en HID. Revisa también el cable y el reconocimiento por Linux |
 | `No module named serial` | Ejecuta el instalador y utiliza el Python del sistema |
 | HTTP 404 | Carpeta `/var/www/html/rfid-bridge`, DocumentRoot y host utilizado |
 | HTTP devuelve código PHP o HTML | Configuración de PHP en Apache; consulta sus registros |
