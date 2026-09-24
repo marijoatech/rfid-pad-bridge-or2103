@@ -108,7 +108,8 @@ def parse_epcs(buffer):
             if len(epc) > 24:
                 epc = epc[-24:]
 
-            if epc and epc != "000000000000000000000000":
+            # Una etiqueta con EPC en ceros sigue presente; no confundirla con NO_TAG.
+            if epc:
                 epcs.append(epc)
 
         i += frame_len

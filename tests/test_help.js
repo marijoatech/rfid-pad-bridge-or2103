@@ -138,12 +138,11 @@ test('POST conserva el EPC como texto y muestra el JSON en su propia tarjeta', a
     app.assertReleased(form);
 });
 
-test('clear transmite el numero de palabras editado', async () => {
+test('Vaciar EPC transmite las 6 palabras fijas del formulario', async () => {
     const app = setup();
     const form = app.form('clear');
-    form.fields[1][1] = '10';
     await app.submit(form);
-    assert.deepEqual(Array.from(app.calls[0].options.body), [['action', 'clear'], ['palabras', '10']]);
+    assert.deepEqual(Array.from(app.calls[0].options.body), [['action', 'clear'], ['palabras', '6']]);
     app.assertReleased(form);
 });
 

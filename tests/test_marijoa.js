@@ -63,6 +63,11 @@ function client(fixture) {
         const factory = client(fixtures.factory);
         factory.sandbox[name]();
         assert.match(factory.html['.panel-info'], /E28436110000100004210970/);
+        const cleared = client(fixtures['zeros_' + action]);
+        cleared.sandbox[name]();
+        assert.equal(cleared.sandbox.rfid_detected, true);
+        assert.match(cleared.html['.panel-info'], /<div>0<\/div>/);
+        assert.equal(cleared.timers.length, 0, 'Una etiqueta vacia no inicia reintentos de NO_TAG');
         const empty = client(fixtures.no_tag);
         empty.sandbox[name]();
         assert.equal(empty.sandbox.rfid_detected, false);

@@ -109,18 +109,16 @@ $windows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
             </article>
             <article class="card">
                 <div class="card-top"><code>clear</code><span class="badge write">Escritura</span></div>
-                <h3>Poner el EPC en ceros</h3>
-                <p>Acepta <code>palabras</code> de 1 a 31. Por defecto usa 6 palabras: 24 dígitos hexadecimales.</p>
+                <h3>Vaciar EPC</h3>
+                <p>Reemplaza el EPC por 24 ceros: <code>000000000000000000000000</code>.</p>
                 <form class="operation-form" action="PADBridge.php" method="post" data-rfid-operation data-result="clear-result">
                     <input type="hidden" name="action" value="clear">
-                    <label for="clear-words-input">Cantidad de palabras</label>
-                    <input id="clear-words-input" name="palabras" type="number" value="6" min="1" max="31" step="1" required aria-describedby="clear-words-hint">
-                    <p id="clear-words-hint" class="field-hint">6 palabras equivalen a 24 dígitos hexadecimales.</p>
-                    <button class="operation-button" type="submit" aria-controls="clear-result" disabled>Poner EPC en ceros</button>
+                    <input type="hidden" name="palabras" value="6">
+                    <button class="operation-button" type="submit" aria-controls="clear-result" disabled>Vaciar EPC</button>
                 </form>
                 <p class="returns">Devuelve <code>WRITTEN=000…</code> seguido de <code>OK</code>.</p>
                 <p class="operation-note">Sobrescribe el EPC con ceros; no borra toda la memoria de la etiqueta.</p>
-                <?php if (!$windows): ?><p class="field-hint">En Linux, la lectura omite los EPC de 24 ceros; después de limpiar con 6 palabras puede devolver NO_TAG.</p><?php endif; ?>
+                <p class="field-hint">Al leer una etiqueta vacía se muestran sus 24 ceros. NO_TAG indica que no se detectó ninguna etiqueta.</p>
                 <div id="clear-result" class="operation-result" role="status" aria-live="polite" hidden>
                     <p class="result-status"></p>
                     <pre tabindex="0" aria-label="Respuesta de clear"></pre>

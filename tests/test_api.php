@@ -56,6 +56,11 @@ foreach ([1, 6, 10, 31] as $words) {
 $fixtures['inventory'] = RfidBridge\parseResult('inventory', "COM=debug\nDETECTED=$epc\nDETECTED=$epc\n", '', 0);
 $fixtures['read'] = RfidBridge\parseResult('read-epc', "COM=debug\nDETECTED=$epc\n", '', 0);
 $fixtures['factory'] = RfidBridge\parseResult('read-epc', 'DETECTED=E28436110000100004210970', '', 0);
+foreach (['read-epc', 'inventory'] as $action) {
+    $fixtures['zeros_' . $action] = RfidBridge\parseResult($action, 'DETECTED=' . str_repeat('0', 24), '', 0);
+    check($fixtures['zeros_' . $action]['ok'] && $fixtures['zeros_' . $action]['resultado'] === 'DETECTED=' . str_repeat('0', 24),
+        'Una etiqueta en ceros sigue detectada en ' . $action);
+}
 $fixtures['no_tag'] = RfidBridge\parseResult('inventory', 'NO_TAG', '', 0);
 $fixtures['error'] = RfidBridge\parseResult('write-epc', "WRITTEN=$epc\nOK\nERROR=WRITE_FAILED", '', 0, $epc);
 check($fixtures['inventory']['resultado'] === 'DETECTED=' . $epc, 'DETECTED comienza en posicion cero, sin duplicados');

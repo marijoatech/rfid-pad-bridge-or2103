@@ -43,10 +43,11 @@ el relleno del EPC y botones para operar el pad. Cada resultado aparece debajo
 de su acción, en la misma página, sin abrir otra pestaña.
 
 En **Grabar un EPC**, ingresa el número de lote o el EPC y pulsa **Grabar EPC**.
-El número se completa con ceros desde la API. En **Poner el EPC en ceros**,
-elige la cantidad de palabras (6 por defecto) y pulsa el botón correspondiente.
-En Linux, la lectura omite EPC de 24 ceros: después de `clear` con 6 palabras
-puede devolver `NO_TAG` aunque la etiqueta siga sobre el pad.
+El número se completa con ceros desde la API. El botón **Vaciar EPC** escribe
+siempre `000000000000000000000000` (24 ceros). Envía 6 palabras de forma fija,
+sin pedir una cantidad al usuario. Una etiqueta detectada con el EPC vacío
+devuelve `DETECTED=000000000000000000000000` tanto en lectura como en inventario.
+`NO_TAG` indica que no se detectó ninguna etiqueta, no que su EPC esté en ceros.
 
 La guía necesita JavaScript para ejecutar los botones, utiliza POST y no envía
 comandos al cargarse. Mientras espera una respuesta, bloquea los botones para
