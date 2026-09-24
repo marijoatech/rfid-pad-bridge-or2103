@@ -53,7 +53,7 @@ fi
 export PATH="/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 [[ $project_dir == /var/www/html/rfid-bridge ]] || fail 'Instala este proyecto en /var/www/html/rfid-bridge antes de ejecutar el script.'
-[[ -f $project_dir/PADBridge.php && -f $project_dir/linux/OR2103Bridge.py ]] || fail 'Faltan archivos del bridge OR2103.'
+[[ -f $project_dir/PADBridge.php && -f $project_dir/lib/Bridge.php && -f $project_dir/linux/OR2103Bridge.py ]] || fail 'Faltan archivos del bridge OR2103.'
 command -v apache2ctl >/dev/null 2>&1 || fail 'Apache debe estar instalado y PHP funcionando antes de instalar el bridge.'
 command -v systemctl >/dev/null 2>&1 || fail 'Se necesita systemd para comprobar los servicios de esta instalacion.'
 id "$web_user" >/dev/null 2>&1 || fail "No existe el usuario de PHP: $web_user"
@@ -72,6 +72,7 @@ for dependency in python3 php curl runuser; do
 done
 python3 -c 'import serial' || fail 'Falta pySerial para el Python del sistema.'
 php -l "$project_dir/PADBridge.php"
+php -l "$project_dir/lib/Bridge.php"
 
 # Leer o ajustar la constante sin importar ni ejecutar el controlador del lector.
 reader_port=$(python3 - "$project_dir/linux/OR2103Bridge.py" "$requested_port" <<'PY'
@@ -160,6 +161,7 @@ fi
 
 systemctl is-active --quiet apache2 || fail 'Apache no esta activo. Revisa systemctl status apache2.'
 runuser -u "$web_user" -- test -r "$project_dir/PADBridge.php" || fail "$web_user no puede leer PADBridge.php o recorrer sus carpetas."
+runuser -u "$web_user" -- test -r "$project_dir/lib/Bridge.php" || fail "$web_user no puede leer lib/Bridge.php."
 runuser -u "$web_user" -- test -r "$project_dir/linux/OR2103Bridge.py" || fail "$web_user no puede leer el programa Python."
 runuser -u "$web_user" -- /usr/bin/python3 -c 'import serial' || fail "El Python ejecutado como $web_user no puede importar pySerial."
 
@@ -192,4 +194,4 @@ printf '\n%s\n' 'Entorno comprobado: dependencias, permisos y respuesta HTTP cor
 printf 'Prueba fisica pendiente: %s?action=read-epc\n' "$bridge_url"
 printf '%s\n' \
     'La comprobacion no abre el lector ni valida proc_open en el PHP de Apache.' \
-    'Comprueba resultado en la lectura: ok=true puede acompanarse de ERROR con el codigo actual.'
+    'La lectura debe devolver DETECTED=... o NO_TAG; los fallos devuelven ok=false y ERROR=... .'

@@ -133,8 +133,11 @@ curl 'http://localhost/rfid-bridge/PADBridge.php?action=read-epc'
 ```
 
 Una lectura puede devolver `DETECTED=...` o `NO_TAG` en el campo `resultado`.
-Ejecuta las pruebas de una en una; aún no existe coordinación entre procesos
-que intentan utilizar el puerto simultáneamente.
+PHP coordina las peticiones de esta instalación mediante un bloqueo: espera
+hasta 5 segundos si otra operación está usando el bridge y devuelve
+`ERROR=BRIDGE_BUSY` si continúa ocupado. El proceso tiene un límite de 30
+segundos (`ERROR=BRIDGE_TIMEOUT`). No ejecutes el Python directamente mientras
+otra aplicación está usando el pad: ese acceso no pasa por el bloqueo de PHP.
 
 ## Elegir otro pad conservando la misma carpeta
 
@@ -169,25 +172,74 @@ con el pad y las etiquetas utilizados.
 
 | Acción HTTP | Windows, fuente principal | Linux |
 | --- | --- | --- |
-| `read-epc` | Implementada | Implementada; puede perder la respuesta inicial |
-| `inventory` | Implementada | No implementada |
-| `status` | Devuelve configuración; no comprueba la conexión | No implementada |
-| `version` | Consulta la versión del lector | No implementada |
-| `write-epc&epc=...` | Implementada | Implementada; protocolo y confirmación pendientes de validar |
-| `clear` | Escribe un EPC de ceros | Escribe un EPC de 24 ceros |
+| `read-epc` | Implementada | Devuelve el primer EPC; conserva la respuesta inicial |
+| `inventory` | Implementada | Devuelve los EPC detectados sin duplicados |
+| `status` | Devuelve configuración; no comprueba la conexión | Devuelve configuración; no abre el puerto |
+| `version` | Consulta la versión del lector | Devuelve `ERROR=VERSION_NOT_SUPPORTED`, con `ok=false` |
+| `write-epc&epc=...` | Implementada | Implementada; conserva los comandos de escritura existentes |
+| `clear&palabras=6` | Escribe un EPC de ceros | Escribe un EPC de ceros; respeta `palabras` |
 
-Pendientes de corrección:
+`clear` utiliza 6 palabras por defecto (24 dígitos hexadecimales). PHP valida y
+transmite `palabras`, entre 1 y 31; la capacidad física depende de la etiqueta.
 
-- Algunos errores de Linux terminan con código cero: **`ok: true` no significa
-  éxito si `resultado` contiene `ERROR=...`.**
-- PHP no transmite `palabras` a `clear`; cambiar ese parámetro no cambia la
-  cantidad borrada.
-- La validación del EPC y de las respuestas seriales necesita mejoras.
-  Valida escritura y borrado con etiquetas de prueba.
+Límites y pendientes:
+
+- La interpretación de las tramas seriales y la validación completa del ACK
+  de escritura siguen pendientes de contrastar con capturas del pad. Se
+  conservan los comandos que ya funcionaron en Debian. `WRITTEN` indica que
+  el bridge reconoció una confirmación; comprueba el EPC con una lectura
+  posterior. No es una verificación independiente del contenido grabado.
+- Las pruebas automatizadas utilizan un lector simulado. Antes de desplegar,
+  valida lectura, inventario y escritura con una etiqueta de prueba en Debian.
 - La API no incluye autenticación y acepta modificaciones mediante GET.
   Restringe su acceso en Apache o en la red antes de habilitar otros equipos.
 - Linux utiliza las constantes de Python. La carga de `config.json` en Windows
   también tiene pendiente corregir la ubicación del archivo.
+
+## Compatibilidad con Marijoa
+
+No requiere modificar `grabarRFID`, `escanearTAGsRFID` ni `checkTAGRFID` en
+`compras/Fraccionar.js`. Se conserva la URL
+`http://localhost/rfid-bridge/PADBridge.php`, los parámetros enviados por POST
+como formulario y el campo textual `resultado`. GET sigue disponible.
+
+| Función de Marijoa | Parámetros | Resultado esperado |
+| --- | --- | --- |
+| `grabarRFID(epc)` | `action=write-epc`, `epc` | `WRITTEN=...` y una segunda línea `OK` |
+| `escanearTAGsRFID()` | `action=inventory` | Líneas `DETECTED=...` o exactamente `NO_TAG` |
+| `checkTAGRFID()` | `action=read-epc` | Una línea `DETECTED=...` o exactamente `NO_TAG` |
+
+Un lote compuesto solo por dígitos y con menos de 24 caracteres se completa
+con ceros a la izquierda. Por ejemplo, `epc=1000027` escribe
+`000000000000000001000027`. Se conservan los dígitos: **no se convierte el
+número decimal a hexadecimal**. Los EPC completos no reciben relleno. Otros
+EPC hexadecimales deben tener una longitud múltiplo de 4, hasta 124 caracteres.
+La validación se realiza antes de iniciar el proceso o abrir el lector.
+El relleno del lote lo realiza PHP; el Python directo requiere un EPC alineado.
+
+Respuesta de escritura para ese ejemplo:
+
+```json
+{
+  "ok": true,
+  "accion": "write-epc",
+  "resultado": "WRITTEN=000000000000000001000027\nOK",
+  "exit_code": 0,
+  "stderr": ""
+}
+```
+
+Las lecturas comienzan directamente por `DETECTED=`: no se anteponen mensajes
+de configuración, porque Marijoa extrae el EPC por su posición. El inventario
+puede devolver varias líneas, aunque el cliente actual utiliza solo la primera.
+
+Los errores devuelven `ok=false`, `exit_code` distinto de cero y un `resultado`
+que comienza por `ERROR=`. Una escritura sin etiqueta también puede devolver
+`NO_TAG` con `ok=false`. La lectura sin etiquetas devuelve `NO_TAG` con `ok=true`.
+PHP elimina las líneas de éxito cuando detecta un error, incluso si el ejecutable
+terminó con código cero. Los errores de operación mantienen HTTP 200 para que
+los manejadores actuales de jQuery puedan procesar el JSON. Se mantienen los
+permisos CORS existentes.
 
 ## Problemas frecuentes
 
@@ -196,10 +248,13 @@ Pendientes de corrección:
 | Puerto inexistente | USB conectado y puerto correcto; vuelve a instalar indicando `--port` |
 | `Permission denied` | Usuario real de PHP, grupo `dialout` y reinicio de Apache/PHP-FPM |
 | No aparece el puerto USB del pad | Selector inferior en USB; desconecta y reconecta si estaba en HID. Revisa también el cable y el reconocimiento por Linux |
-| `No module named serial` | Ejecuta el instalador y utiliza el Python del sistema |
+| `ERROR=PYSERIAL_NOT_INSTALLED` | Ejecuta el instalador y utiliza el Python del sistema |
 | HTTP 404 | Carpeta `/var/www/html/rfid-bridge`, DocumentRoot y host utilizado |
 | HTTP devuelve código PHP o HTML | Configuración de PHP en Apache; consulta sus registros |
-| `ERROR=UNKNOWN_ACTION` | `status`, `inventory` y `version` no están implementados en Linux |
+| `ERROR=UNKNOWN_ACTION` | Revisa el nombre de la acción; `status` e `inventory` están implementados. Actualiza si todavía usas una revisión anterior |
+| `ERROR=VERSION_NOT_SUPPORTED` | La consulta de versión del lector aún no está implementada en Linux |
+| `ERROR=BRIDGE_BUSY` | Otra petición ocupa el bridge; espera a que termine antes de repetir |
+| `ERROR=BRIDGE_TIMEOUT` | El proceso excedió el límite; revisa puerto y lector. Antes de repetir una escritura, lee el EPC para saber si se aplicó |
 | `NO_TAG` | Posición y compatibilidad de la etiqueta; no demuestra por sí solo un problema de instalación |
 | Lectura falla solo por HTTP | Usuario de PHP, permisos del puerto y disponibilidad de `proc_open` en el PHP del servidor |
 
@@ -243,6 +298,30 @@ mismo modelo de pad, en lugar de mezclar revisiones durante el despliegue.
 Para administrar varias máquinas, registra por equipo: nombre de máquina,
 modelo de pad, URL del repositorio, commit instalado, ruta del puerto, usuario
 de PHP y resultado de la prueba física. Así puedes repetir una instalación conocida.
+
+## Pruebas de desarrollo sin hardware
+
+Desde la raíz del repositorio:
+
+```bash
+php -n tests/test_api.php
+python3 -m unittest discover -s tests -p 'test_*.py' -v
+bash -n install.sh
+```
+
+Las pruebas cubren validación y respuestas de PHP, ejecución y bloqueo de
+procesos, transporte HTTP y operaciones de Python con el puerto simulado.
+No escriben ni borran etiquetas. PHP CLI debe estar disponible en PATH.
+
+Para comprobar las funciones originales de Marijoa, con Node.js disponible:
+
+```powershell
+node tests/test_marijoa.js C:\wamp64\www\marijoa\compras\Fraccionar.js
+```
+
+Esta prueba carga esas tres funciones y simula jQuery y sus respuestas, sin
+modificar el archivo ni efectuar peticiones de red. Node.js solo es necesario
+para esta prueba, no para instalar o utilizar el bridge.
 
 ## Referencias
 
