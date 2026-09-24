@@ -29,7 +29,7 @@ code,pre {
 code {
     font-size:.91em;
 }
-a:focus-visible,summary:focus-visible {
+a:focus-visible,summary:focus-visible,input:focus-visible,button:focus-visible,pre:focus-visible {
     outline:3px solid var(--accent);
     outline-offset:5px;
 }
@@ -210,6 +210,7 @@ h2 {
 }
 .cards {
     display:grid;
+    align-items:start;
     grid-template-columns:repeat(3,minmax(0,1fr));
     gap:17px;
 }
@@ -310,6 +311,77 @@ h3 {
 }
 .card .operation-note code {
     overflow-wrap:anywhere;
+}
+.operation-form {
+    margin-top:auto;
+    padding-top:16px;
+}
+.operation-form label {
+    display:block;
+    font-size:12px;
+    font-weight:650;
+    margin-bottom:7px;
+}
+.operation-form input:not([type="hidden"]) {
+    width:100%;
+    min-width:0;
+    padding:11px 12px;
+    border:1px solid #aabac5;
+    border-radius:6px;
+    background:#fff;
+    color:var(--ink);
+    font:15px Consolas,"Liberation Mono",monospace;
+}
+.field-hint,.card>.field-hint {
+    font-size:12px;
+    color:var(--muted);
+    margin:8px 0 14px;
+    line-height:1.5;
+}
+.operation-button {
+    width:100%;
+    padding:11px 14px;
+    border:0;
+    border-radius:6px;
+    background:var(--ink);
+    color:#fff;
+    font:650 13px/1.5 "Segoe UI",system-ui,sans-serif;
+    text-align:center;
+    cursor:pointer;
+}
+.operation-button:hover:not(:disabled) {
+    background:#254b63;
+}
+.operation-button:disabled {
+    opacity:.55;
+    cursor:wait;
+}
+.operation-result {
+    margin-top:16px;
+    padding:14px;
+    border:1px solid var(--line);
+    border-radius:6px;
+    background:#f4f7f9;
+    overflow-wrap:anywhere;
+}
+.operation-result[data-state="success"] {
+    border-color:#b9d6c8;
+    background:#f1f8f4;
+}
+.operation-result[data-state="error"] {
+    border-color:#e0b7a7;
+    background:#fcf3ee;
+}
+.result-status {
+    margin:0 0 8px;
+    font-size:12px;
+    font-weight:650;
+}
+.operation-result pre {
+    white-space:pre-wrap;
+    overflow-wrap:anywhere;
+    font-size:11px;
+    line-height:1.6;
 }
 #respuestas {
     padding-top:56px;

@@ -73,7 +73,7 @@ class HttpTests(unittest.TestCase):
             self.assertIn("Accept", response.headers["Vary"])
             html = response.read().decode("utf-8")
         for action in ("read-epc", "inventory", "status", "write-epc", "clear", "version"):
-            self.assertIn("?action=" + action, html)
+            self.assertIn("<code>" + action + "</code>", html)
         self.assertIn("000000000000000000130527", html)
         self.assertIn('lang="es"', html)
         self.assertNotIn('href="PADBridge.php?action=write-epc', html)

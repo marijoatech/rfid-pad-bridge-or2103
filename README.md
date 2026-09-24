@@ -39,8 +39,20 @@ se solicita una operación.
 
 Abre [la guía del bridge](http://localhost/rfid-bridge/PADBridge.php) sin
 parámetros. Muestra las seis acciones, ejemplos de parámetros y respuestas,
-el relleno del EPC y enlaces para consultar o leer. La guía no envía comandos
-al pad al cargarse. Los ejemplos de escritura y borrado son texto informativo.
+el relleno del EPC y botones para operar el pad. Cada resultado aparece debajo
+de su acción, en la misma página, sin abrir otra pestaña.
+
+En **Grabar un EPC**, ingresa el número de lote o el EPC y pulsa **Grabar EPC**.
+El número se completa con ceros desde la API. En **Poner el EPC en ceros**,
+elige la cantidad de palabras (6 por defecto) y pulsa el botón correspondiente.
+En Linux, la lectura omite EPC de 24 ceros: después de `clear` con 6 palabras
+puede devolver `NO_TAG` aunque la etiqueta siga sobre el pad.
+
+La guía necesita JavaScript para ejecutar los botones, utiliza POST y no envía
+comandos al cargarse. Mientras espera una respuesta, bloquea los botones para
+evitar operaciones superpuestas. No reintenta automáticamente. Si se pierde la
+respuesta de escritura o borrado, lee el EPC antes de repetir: la operación
+podría haberse aplicado aunque el navegador no recibiera la confirmación.
 
 - Un GET sin `action` que acepte HTML muestra la guía. `?help=1` permite abrirla
   explícitamente.
@@ -331,6 +343,13 @@ bash -n install.sh
 Las pruebas cubren validación y respuestas de PHP, ejecución y bloqueo de
 procesos, transporte HTTP y operaciones de Python con el puerto simulado.
 No escriben ni borran etiquetas. PHP CLI debe estar disponible en PATH.
+
+Con Node.js, comprueba los controles de la ayuda con respuestas simuladas,
+sin acceder a la red ni al pad:
+
+```bash
+node tests/test_help.js
+```
 
 Para comprobar las funciones originales de Marijoa, con Node.js disponible:
 

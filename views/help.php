@@ -1,5 +1,5 @@
 <?php
-// Vista informativa: no carga configuracion ni ejecuta operaciones del lector.
+// Cargar la vista no opera el lector; los formularios se envian desde assets/help.js.
 $windows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
 ?>
 <!doctype html>
@@ -10,6 +10,7 @@ $windows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
     <meta name="color-scheme" content="light">
     <title>OR2103 · Guía de RFID Bridge</title>
     <link rel="stylesheet" href="assets/help.css">
+    <script src="assets/help.js" defer></script>
 </head>
 <body>
 <header class="topbar">
@@ -41,6 +42,7 @@ $windows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
 
     <section id="acciones" aria-labelledby="acciones-titulo">
         <div class="section-heading"><div><span class="eyebrow">01 / OPERACIONES</span><h2 id="acciones-titulo">Elige una acción</h2></div><p>Envía <code>action</code> por GET o POST.<br> Las operaciones siempre devuelven JSON.</p></div>
+        <noscript><p class="setup-note">Activa JavaScript para ejecutar las operaciones y ver sus respuestas en esta página.</p></noscript>
         <div class="cards">
             <article class="card">
                 <div class="card-top"><code>read-epc</code><span class="badge">Lectura</span></div>
@@ -48,7 +50,14 @@ $windows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
                 <p>Obtiene el primer EPC detectado. Coloca una etiqueta sobre el pad.</p>
                 <div class="request"><span>GET</span><code>?action=read-epc</code></div>
                 <p class="returns">Devuelve <code>DETECTED=…</code> o <code>NO_TAG</code>.</p>
-                <a class="action-link" href="PADBridge.php?action=read-epc" target="_blank" rel="noopener">Leer EPC <span aria-hidden="true">↗</span></a>
+                <form class="operation-form" action="PADBridge.php" method="post" data-rfid-operation data-result="read-epc-result">
+                    <input type="hidden" name="action" value="read-epc">
+                    <button class="operation-button" type="submit" aria-controls="read-epc-result" disabled>Leer EPC</button>
+                </form>
+                <div id="read-epc-result" class="operation-result" role="status" aria-live="polite" hidden>
+                    <p class="result-status"></p>
+                    <pre tabindex="0" aria-label="Respuesta de read-epc"></pre>
+                </div>
             </article>
             <article class="card">
                 <div class="card-top"><code>inventory</code><span class="badge">Lectura</span></div>
@@ -56,7 +65,14 @@ $windows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
                 <p>Busca etiquetas y devuelve una línea por cada EPC detectado, sin duplicados.</p>
                 <div class="request"><span>GET</span><code>?action=inventory</code></div>
                 <p class="returns">Devuelve líneas <code>DETECTED=…</code> o <code>NO_TAG</code>.</p>
-                <a class="action-link" href="PADBridge.php?action=inventory" target="_blank" rel="noopener">Escanear <span aria-hidden="true">↗</span></a>
+                <form class="operation-form" action="PADBridge.php" method="post" data-rfid-operation data-result="inventory-result">
+                    <input type="hidden" name="action" value="inventory">
+                    <button class="operation-button" type="submit" aria-controls="inventory-result" disabled>Escanear</button>
+                </form>
+                <div id="inventory-result" class="operation-result" role="status" aria-live="polite" hidden>
+                    <p class="result-status"></p>
+                    <pre tabindex="0" aria-label="Respuesta de inventory"></pre>
+                </div>
             </article>
             <article class="card">
                 <div class="card-top"><code>status</code><span class="badge neutral">Configuración</span></div>
@@ -64,23 +80,51 @@ $windows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
                 <p>Muestra el puerto, la velocidad y el tiempo de espera. No comprueba que el pad responda.</p>
                 <div class="request"><span>GET</span><code>?action=status</code></div>
                 <p class="returns">Devuelve <code>OK</code> y los valores configurados.</p>
-                <a class="action-link" href="PADBridge.php?action=status" target="_blank" rel="noopener">Ver configuración <span aria-hidden="true">↗</span></a>
+                <form class="operation-form" action="PADBridge.php" method="post" data-rfid-operation data-result="status-result">
+                    <input type="hidden" name="action" value="status">
+                    <button class="operation-button" type="submit" aria-controls="status-result" disabled>Ver configuración</button>
+                </form>
+                <div id="status-result" class="operation-result" role="status" aria-live="polite" hidden>
+                    <p class="result-status"></p>
+                    <pre tabindex="0" aria-label="Respuesta de status"></pre>
+                </div>
             </article>
             <article class="card">
                 <div class="card-top"><code>write-epc</code><span class="badge write">Escritura</span></div>
                 <h3>Grabar un EPC</h3>
                 <p>Requiere <code>epc</code>. Un lote numérico corto se completa con ceros hasta 24 caracteres.</p>
-                <div class="request"><span>Ejemplo</span><code>?action=write-epc&amp;epc=130527</code></div>
+                <form class="operation-form" action="PADBridge.php" method="post" data-rfid-operation data-result="write-epc-result">
+                    <input type="hidden" name="action" value="write-epc">
+                    <label for="write-epc-input">Número de lote o EPC</label>
+                    <input id="write-epc-input" name="epc" type="text" placeholder="Ej.: 130527" required maxlength="124" pattern="[0-9A-Fa-f]+" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-describedby="write-epc-hint">
+                    <p id="write-epc-hint" class="field-hint">Los números cortos se completan con ceros. También puedes ingresar un EPC hexadecimal.</p>
+                    <button class="operation-button" type="submit" aria-controls="write-epc-result" disabled>Grabar EPC</button>
+                </form>
                 <p class="returns">Devuelve <code>WRITTEN=…</code> y una segunda línea <code>OK</code>.</p>
                 <p class="operation-note">Modifica la etiqueta. Después de grabar, vuelve a leer el EPC para comprobarlo.</p>
+                <div id="write-epc-result" class="operation-result" role="status" aria-live="polite" hidden>
+                    <p class="result-status"></p>
+                    <pre tabindex="0" aria-label="Respuesta de write-epc"></pre>
+                </div>
             </article>
             <article class="card">
                 <div class="card-top"><code>clear</code><span class="badge write">Escritura</span></div>
                 <h3>Poner el EPC en ceros</h3>
                 <p>Acepta <code>palabras</code> de 1 a 31. Por defecto usa 6 palabras: 24 dígitos hexadecimales.</p>
-                <div class="request"><span>Ejemplo</span><code>?action=clear&amp;palabras=6</code></div>
+                <form class="operation-form" action="PADBridge.php" method="post" data-rfid-operation data-result="clear-result">
+                    <input type="hidden" name="action" value="clear">
+                    <label for="clear-words-input">Cantidad de palabras</label>
+                    <input id="clear-words-input" name="palabras" type="number" value="6" min="1" max="31" step="1" required aria-describedby="clear-words-hint">
+                    <p id="clear-words-hint" class="field-hint">6 palabras equivalen a 24 dígitos hexadecimales.</p>
+                    <button class="operation-button" type="submit" aria-controls="clear-result" disabled>Poner EPC en ceros</button>
+                </form>
                 <p class="returns">Devuelve <code>WRITTEN=000…</code> seguido de <code>OK</code>.</p>
                 <p class="operation-note">Sobrescribe el EPC con ceros; no borra toda la memoria de la etiqueta.</p>
+                <?php if (!$windows): ?><p class="field-hint">En Linux, la lectura omite los EPC de 24 ceros; después de limpiar con 6 palabras puede devolver NO_TAG.</p><?php endif; ?>
+                <div id="clear-result" class="operation-result" role="status" aria-live="polite" hidden>
+                    <p class="result-status"></p>
+                    <pre tabindex="0" aria-label="Respuesta de clear"></pre>
+                </div>
             </article>
             <article class="card">
                 <div class="card-top"><code>version</code><span class="badge neutral">Windows</span></div>
@@ -89,7 +133,14 @@ $windows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
                 <div class="request"><span>GET</span><code>?action=version</code></div>
                 <p class="returns">En Linux devuelve <code>ERROR=VERSION_NOT_SUPPORTED</code>.</p>
                 <?php if ($windows): ?>
-                <a class="action-link" href="PADBridge.php?action=version" target="_blank" rel="noopener">Consultar versión <span aria-hidden="true">↗</span></a>
+                <form class="operation-form" action="PADBridge.php" method="post" data-rfid-operation data-result="version-result">
+                    <input type="hidden" name="action" value="version">
+                    <button class="operation-button" type="submit" aria-controls="version-result" disabled>Consultar versión</button>
+                </form>
+                <div id="version-result" class="operation-result" role="status" aria-live="polite" hidden>
+                    <p class="result-status"></p>
+                    <pre tabindex="0" aria-label="Respuesta de version"></pre>
+                </div>
                 <?php else: ?>
                 <p class="operation-note">No disponible en este servidor Linux.</p>
                 <?php endif; ?>
