@@ -118,12 +118,16 @@ $windows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
     </section>
 
     <section id="integracion" class="integration" aria-labelledby="integracion-titulo">
-        <div><span class="eyebrow">03 / MARIJOA</span><h2 id="integracion-titulo">Tus llamadas siguen igual.</h2><p>Usa la misma URL desde cada equipo y envía los parámetros como formulario. No necesitas cambiar <code>grabarRFID</code>, <code>escanearTAGsRFID</code> ni <code>checkTAGRFID</code>.</p><p class="endpoint"><code>http://localhost/rfid-bridge/PADBridge.php</code></p></div>
+        <div><h2 id="integracion-titulo">Tus llamadas siguen igual.</h2><p>Usa la misma URL desde cada equipo y envía los parámetros como formulario. No necesitas cambiar <code>grabarRFID</code>, <code>escanearTAGsRFID</code> ni <code>checkTAGRFID</code>.</p><p class="endpoint"><code>http://localhost/rfid-bridge/PADBridge.php</code></p></div>
         <div class="integration-code"><span>POST · EJEMPLO PARA TU APLICACIÓN</span><pre><code>action=write-epc&amp;epc=130527</code></pre><p>Los errores de operación mantienen HTTP 200. Revisa <code>ok</code> y <code>resultado</code> en el JSON.</p></div>
     </section>
 
     <details class="technical"><summary>¿Dónde está el código del bridge?</summary><p><code>PADBridge.php</code> recibe las peticiones y elige entre esta ayuda y la API. <code>lib/Bridge.php</code> contiene la validación, el relleno del EPC, el bloqueo, la ejecución y el formato de las respuestas. La comunicación con el pad sigue en <code>linux/OR2103Bridge.py</code> o <code>windows/OR2103Bridge.exe</code>.</p><p>El archivo principal es más corto porque la lógica se organizó por responsabilidad. Para pedir JSON sin acción, usa <a href="PADBridge.php?format=json"><code>?format=json</code></a>. Para abrir siempre esta guía, usa <a href="PADBridge.php?help=1"><code>?help=1</code></a>.</p></details>
 </main>
-<footer><span>RFID Bridge <b>OR2103</b></span><span>Ayuda local · Sin dependencias externas</span></footer>
+<footer>
+    <span>RFID Bridge <b>OR2103</b></span>
+    <span>&copy; 2026 · Desarrollado por: Ing. Doglas A. Dembogurski Feix</span>
+    <span>Ayuda local · Sin dependencias externas</span>
+</footer>
 </body>
 </html>
