@@ -21,7 +21,12 @@ public class OR2103Bridge
 
     public static int Main(string[] args)
     {
-        LoadConfig();
+        try { LoadConfig(); }
+        catch (Exception ex)
+        {
+            Out("ERROR=" + Clean(ex.Message));
+            return 1;
+        }
 
         if (args.Length < 1)
         {
@@ -31,19 +36,43 @@ public class OR2103Bridge
 
         string action = args[0].Trim().ToLowerInvariant();
 
-        if (action == "status")
-        {
-            Out("OK");
-            Out("COM=" + ComPort);
-            Out("BAUDRATE=" + BaudRate);
-            Out("TIMEOUT_MS=" + TimeoutMs);
-            return 0;
-        }
-
         if (action == "methods")
         {
             PrintMethods();
             return 0;
+        }
+
+        int requestedPower = 0;
+        if (action == "set-power")
+        {
+            if (args.Length < 2)
+            {
+                Out("ERROR=POWER_REQUIRED");
+                return 1;
+            }
+            if (!Regex.IsMatch(args[1], @"\A[0-9]{1,2}\z") ||
+                !int.TryParse(args[1], out requestedPower) || requestedPower < 5 || requestedPower > 30)
+            {
+                Out("ERROR=POWER_INVALID");
+                return 1;
+            }
+        }
+        if (action != "status" && action != "get-power" && action != "set-power" &&
+            action != "version" && action != "inventory" && action != "read-epc" &&
+            action != "write-epc" && action != "clear")
+        {
+            Out("ERROR=UNKNOWN_ACTION");
+            return 1;
+        }
+
+        if (action == "inventory" || action == "read-epc" || action == "write-epc" || action == "clear")
+        {
+            try { LoadRuntimePower(); }
+            catch (Exception ex)
+            {
+                Out("ERROR=" + Clean(ex.Message));
+                return 1;
+            }
         }
 
         string msg;
@@ -55,9 +84,13 @@ public class OR2103Bridge
 
         try
         {
-            PrepareReader();
-
+            // Consultas diagnosticas exigen una respuesta del lector y no cambian su potencia.
+            if (action == "status") return Status();
+            if (action == "get-power") return GetPower();
+            if (action == "set-power") return SetPower(requestedPower);
             if (action == "version") return Version();
+
+            PrepareReader();
             if (action == "inventory") return Inventory(false);
             if (action == "read-epc") return Inventory(true);
 
@@ -92,11 +125,13 @@ public class OR2103Bridge
 			string m;
 
 			// No forzar StopInventory aqui, porque despues de write puede colgar
-			try { readerManager.SetLedBuzzer(0, out m); } catch { }
-
-			TryClose(readerManager);
-
-			Thread.Sleep(800);
+            if (action == "inventory" || action == "read-epc" || action == "write-epc" || action == "clear")
+            {
+                try { readerManager.SetLedBuzzer(0, out m); } catch { }
+            }
+            TryClose(readerManager);
+            if (action == "inventory" || action == "read-epc" || action == "write-epc" || action == "clear")
+                Thread.Sleep(800);
 		}
     }
 
@@ -119,10 +154,11 @@ public class OR2103Bridge
 				msg = ex.Message;
 			}
 
-			Thread.Sleep(500);
-		}
+            TryClose(readerManager);
+            Thread.Sleep(500);
+        }
 
-		return false;
+        return false;
 	}
 
 	private static void PrepareReader()
@@ -133,7 +169,15 @@ public class OR2103Bridge
 		try { readerManager.StopInventory(); } catch { }
 		Thread.Sleep(300);
 
-		try { readerManager.SetPower(Power, out msg); } catch { }
+        // Cada operacion debe conservar la potencia elegida, no continuar si el lector la rechaza.
+        bool powerSet;
+        try { powerSet = readerManager.SetPower(Power, out msg); }
+        catch { throw new InvalidOperationException("POWER_SET_FAILED"); }
+        if (!powerSet) throw new InvalidOperationException("POWER_SET_FAILED");
+        int actualPower;
+        try { actualPower = readerManager.GetPower(out msg); }
+        catch { throw new InvalidOperationException("POWER_VERIFY_FAILED"); }
+        if (actualPower != Power) throw new InvalidOperationException("POWER_VERIFY_FAILED");
 
 		// EPC area
 		try { readerManager.SetReadArea(0, 0, 0, out msg); } catch { }
@@ -248,6 +292,61 @@ public class OR2103Bridge
             }
             catch { }
         }
+    }
+
+    private static int ReadPower(out int actualPower)
+    {
+        string msg;
+        actualPower = readerManager.GetPower(out msg);
+        // El SDK valida cabecera, checksum y estado de la respuesta 0x22; -1 significa fallo.
+        if (actualPower < 0 || actualPower > 255)
+        {
+            Out("ERROR=READER_NOT_RESPONDING" + (string.IsNullOrEmpty(msg) ? "" : ":" + Clean(msg)));
+            return 1;
+        }
+        return 0;
+    }
+
+    private static int Status()
+    {
+        int actualPower;
+        if (ReadPower(out actualPower) != 0) return 1;
+        Out("OK");
+        Out("CONNECTED=1");
+        Out("COM=" + ComPort);
+        Out("BAUDRATE=" + BaudRate);
+        Out("TIMEOUT_MS=" + TimeoutMs);
+        Out("POWER=" + actualPower);
+        return 0;
+    }
+
+    private static int GetPower()
+    {
+        int actualPower;
+        if (ReadPower(out actualPower) != 0) return 1;
+        Out("POWER=" + actualPower);
+        Out("OK");
+        return 0;
+    }
+
+    private static int SetPower(int requestedPower)
+    {
+        string msg;
+        if (!readerManager.SetPower(requestedPower, out msg))
+        {
+            Out("ERROR=POWER_SET_FAILED" + (string.IsNullOrEmpty(msg) ? "" : ":" + Clean(msg)));
+            return 1;
+        }
+        int actualPower;
+        if (ReadPower(out actualPower) != 0) return 1;
+        if (actualPower != requestedPower)
+        {
+            Out("ERROR=POWER_VERIFY_FAILED");
+            return 1;
+        }
+        Out("POWER=" + actualPower);
+        Out("OK");
+        return 0;
     }
 
     private static int Version()
@@ -426,33 +525,54 @@ public class OR2103Bridge
 
     private static void LoadConfig()
     {
+        // BaseDirectory termina en separador: quitarlo antes de buscar la raiz del proyecto.
+        string baseDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string projectDir = Directory.GetParent(baseDir).FullName;
         try
         {
-            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-            string configPath = Path.Combine(Directory.GetParent(baseDir).FullName, "config.json");
-
+            string configPath = Path.Combine(projectDir, "config.json");
             if (!File.Exists(configPath)) configPath = Path.Combine(baseDir, "config.json");
-            if (!File.Exists(configPath)) return;
-
-            string json = File.ReadAllText(configPath);
-
-            string com = MatchString(json, "com");
-            if (com.Length > 0) ComPort = com;
-
-            int baud = MatchInt(json, "baudrate");
-            if (baud > 0) BaudRate = baud;
-
-            int timeout = MatchInt(json, "timeout_ms");
-            if (timeout > 0) TimeoutMs = timeout;
-
-            string pwd = NormalizeHex(MatchString(json, "access_pwd"));
-            if (pwd.Length == 8) AccessPwd = pwd;
-
-			int power = MatchInt(json, "power");
-			if (power >= 5 && power <= 30) Power = power;
-
+            if (File.Exists(configPath))
+            {
+                string json = File.ReadAllText(configPath);
+                // Las secciones actuales son objetos planos. No tomar valores de la seccion Linux.
+                Match section = Regex.Match(json, "\\\"windows\\\"\\s*:\\s*\\{([^{}]*)\\}", RegexOptions.IgnoreCase);
+                if (section.Success)
+                {
+                    string config = section.Groups[1].Value;
+                    string com = MatchString(config, "com");
+                    if (com.Length > 0) ComPort = com;
+                    int baud = MatchInt(config, "baudrate");
+                    if (baud > 0) BaudRate = baud;
+                    int timeout = MatchInt(config, "timeout_ms");
+                    if (timeout > 0) TimeoutMs = timeout;
+                    string pwd = NormalizeHex(MatchString(config, "access_pwd"));
+                    if (pwd.Length == 8) AccessPwd = pwd;
+                    int power = MatchInt(config, "power");
+                    if (power >= 5 && power <= 30) Power = power;
+                }
+            }
         }
         catch { }
+
+    }
+
+    private static void LoadRuntimePower()
+    {
+        string baseDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string projectDir = Directory.GetParent(baseDir).FullName;
+        string powerPath = Path.Combine(projectDir, "runtime", "antenna-power.json");
+        string saved;
+        try { saved = File.ReadAllText(powerPath); }
+        catch (FileNotFoundException) { return; }
+        catch (DirectoryNotFoundException) { return; }
+        catch { throw new InvalidOperationException("POWER_CONFIG_READ_FAILED"); }
+        // PHP guarda un objeto de una sola propiedad; no admitir valores parciales o ambiguos.
+        Match setting = Regex.Match(saved, @"\A\s*\{\s*""power""\s*:\s*([1-9][0-9]?)\s*\}\s*\z");
+        int savedPower;
+        if (!setting.Success || !int.TryParse(setting.Groups[1].Value, out savedPower) || savedPower < 5 || savedPower > 30)
+            throw new InvalidOperationException("POWER_CONFIG_INVALID");
+        Power = savedPower;
     }
 
     private static string MatchString(string json, string key)
@@ -465,7 +585,6 @@ public class OR2103Bridge
     {
         Match m = Regex.Match(json, "\\\"" + Regex.Escape(key) + "\\\"\\s*:\\s*(\\d+)", RegexOptions.IgnoreCase);
         if (!m.Success) return 0;
-
         int value;
         return int.TryParse(m.Groups[1].Value, out value) ? value : 0;
     }

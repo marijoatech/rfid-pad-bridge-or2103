@@ -72,10 +72,16 @@ class HttpTests(unittest.TestCase):
             self.assertIn("text/html", response.headers["Content-Type"])
             self.assertIn("Accept", response.headers["Vary"])
             html = response.read().decode("utf-8")
-        for action in ("read-epc", "inventory", "status", "write-epc", "clear", "version"):
+        for action in ("read-epc", "inventory", "status", "write-epc", "clear", "version", "get-power", "set-power"):
             self.assertIn("<code>" + action + "</code>", html)
         self.assertIn("000000000000000000130527", html)
         self.assertIn('lang="es"', html)
+        self.assertIn("Comprobar la conexión", html)
+        self.assertNotIn("No comprueba que el pad responda", html)
+        self.assertIn('name="power" type="number" min="5" max="30" step="1"', html)
+        self.assertIn('data-result="get-power-result"', html)
+        self.assertIn('data-result="set-power-result"', html)
+        self.assertIn('name="palabras" value="6"', html)
         self.assertNotIn('href="PADBridge.php?action=write-epc', html)
         self.assertNotIn('href="PADBridge.php?action=clear', html)
         with urllib.request.urlopen(self.url.replace("PADBridge.php", "assets/help.css"), timeout=3) as response:

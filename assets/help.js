@@ -45,9 +45,14 @@
                 }
 
                 result.dataset.state = data.ok ? 'success' : 'error';
-                status.textContent = data.ok
-                    ? (data.resultado === 'NO_TAG' ? 'No se detectaron etiquetas.' : 'Operación completada.')
-                    : 'La operación devolvió un error.';
+                let successMessage = 'Operación completada.';
+                if (data.resultado === 'NO_TAG') successMessage = 'No se detectaron etiquetas.';
+                if (action === 'status') successMessage = 'El pad está conectado y responde.';
+                const powerMatch = data.resultado.match(/^POWER=(\d+)$/m);
+                if ((action === 'get-power' || action === 'set-power') && powerMatch) {
+                    successMessage = (action === 'set-power' ? 'Potencia aplicada: ' : 'Potencia actual: ') + powerMatch[1] + '.';
+                }
+                status.textContent = data.ok ? successMessage : 'La operación devolvió un error.';
                 // La respuesta del dispositivo es texto; nunca interpretarla como HTML.
                 output.textContent = JSON.stringify(data, null, 2);
             } catch (error) {
@@ -57,7 +62,8 @@
                     ? 'Se agotó el tiempo de espera de la respuesta.'
                     : 'Comprueba la conexión y que el bridge esté disponible. ' + error.message;
                 output.textContent = detail + ((action === 'write-epc' || action === 'clear')
-                    ? ' Lee el EPC antes de repetir la operación: el pad podría haberla realizado.' : '');
+                    ? ' Lee el EPC antes de repetir la operación: el pad podría haberla realizado.'
+                    : (action === 'set-power' ? ' Consulta la potencia antes de repetir: el pad podría haber aplicado el cambio.' : ''));
             } finally {
                 clearTimeout(timeout);
                 busy = false;

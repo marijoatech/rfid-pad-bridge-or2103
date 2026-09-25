@@ -75,14 +75,14 @@ $windows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
                 </div>
             </article>
             <article class="card">
-                <div class="card-top"><code>status</code><span class="badge neutral">Configuración</span></div>
-                <h3>Ver la configuración</h3>
-                <p>Muestra el puerto, la velocidad y el tiempo de espera. No comprueba que el pad responda.</p>
+                <div class="card-top"><code>status</code><span class="badge neutral">Conexión</span></div>
+                <h3>Comprobar la conexión</h3>
+                <p>Consulta el pad para comprobar que responde. Muestra el puerto, la velocidad, el tiempo de espera y la potencia actual.</p>
                 <div class="request"><span>GET</span><code>?action=status</code></div>
-                <p class="returns">Devuelve <code>OK</code> y los valores configurados.</p>
+                <p class="returns">Devuelve <code>CONNECTED=1</code> solo si el pad responde; si está desconectado, devuelve un error.</p>
                 <form class="operation-form" action="PADBridge.php" method="post" data-rfid-operation data-result="status-result">
                     <input type="hidden" name="action" value="status">
-                    <button class="operation-button" type="submit" aria-controls="status-result" disabled>Ver configuración</button>
+                    <button class="operation-button" type="submit" aria-controls="status-result" disabled>Comprobar conexión</button>
                 </form>
                 <div id="status-result" class="operation-result" role="status" aria-live="polite" hidden>
                     <p class="result-status"></p>
@@ -122,6 +122,31 @@ $windows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
                 <div id="clear-result" class="operation-result" role="status" aria-live="polite" hidden>
                     <p class="result-status"></p>
                     <pre tabindex="0" aria-label="Respuesta de clear"></pre>
+                </div>
+            </article>
+            <article class="card">
+                <div class="card-top"><code>get-power</code><span class="badge neutral">Antena</span></div>
+                <h3>Potencia de la antena</h3>
+                <p>Consulta la potencia del pad o aplica un valor entero entre 5 y 30. El bridge conserva el valor elegido para las siguientes lecturas y escrituras.</p>
+                <form class="operation-form" action="PADBridge.php" method="post" data-rfid-operation data-result="get-power-result">
+                    <input type="hidden" name="action" value="get-power">
+                    <button class="operation-button" type="submit" aria-controls="get-power-result" disabled>Consultar potencia</button>
+                </form>
+                <div id="get-power-result" class="operation-result" role="status" aria-live="polite" hidden>
+                    <p class="result-status"></p>
+                    <pre tabindex="0" aria-label="Respuesta de get-power"></pre>
+                </div>
+                <form class="operation-form" action="PADBridge.php" method="post" data-rfid-operation data-result="set-power-result">
+                    <input type="hidden" name="action" value="set-power">
+                    <label for="antenna-power-input">Nueva potencia (5 a 30)</label>
+                    <input id="antenna-power-input" name="power" type="number" min="5" max="30" step="1" value="10" required aria-describedby="antenna-power-hint">
+                    <p id="antenna-power-hint" class="field-hint">10 es el valor propuesto. Pulsa Consultar potencia para conocer el valor actual del pad.</p>
+                    <button class="operation-button" type="submit" aria-controls="set-power-result" disabled>Aplicar potencia</button>
+                </form>
+                <p class="returns"><code>set-power</code> requiere <code>power</code>. Ambas acciones devuelven <code>POWER=…</code> seguido de <code>OK</code>.</p>
+                <div id="set-power-result" class="operation-result" role="status" aria-live="polite" hidden>
+                    <p class="result-status"></p>
+                    <pre tabindex="0" aria-label="Respuesta de set-power"></pre>
                 </div>
             </article>
             <article class="card">

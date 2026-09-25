@@ -31,6 +31,15 @@ function normalizeWords($value): string
     return (string) (int) $value;
 }
 
+function normalizePower($value): string
+{
+    if ((!is_string($value) && !is_int($value)) ||
+        !preg_match('/\A[0-9]{1,2}\z/', (string) $value) || (int) $value < 5 || (int) $value > 30) {
+        throw new \InvalidArgumentException('POWER_INVALID');
+    }
+    return (string) (int) $value;
+}
+
 function parseResult(string $action, string $stdout, string $stderr, int $exitCode, string $expectedEpc = ''): array
 {
     $lines = array_values(array_filter(array_map('trim', preg_split('/\r\n|\n|\r/', $stdout)), 'strlen'));
@@ -60,6 +69,24 @@ function parseResult(string $action, string $stdout, string $stderr, int $exitCo
             $clean = ['ERROR=EMPTY_RESPONSE'];
             $exitCode = 1;
         }
+    } elseif (in_array($action, ['status', 'get-power', 'set-power'], true)) {
+        $powerLines = array_values(array_filter($lines, function ($line) {
+            return strpos($line, 'POWER=') === 0;
+        }));
+        // Un ejecutable antiguo que solo imprime configuracion no confirma conexion.
+        if (count($powerLines) !== 1 || !preg_match('/\APOWER=(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\z/', $powerLines[0]) || !in_array('OK', $lines, true) ||
+            ($action === 'status' && !in_array('CONNECTED=1', $lines, true))) {
+            $clean = ['ERROR=READER_RESPONSE_INVALID'];
+            $exitCode = 1;
+        } elseif ($action === 'set-power' && $powerLines[0] !== 'POWER=' . $expectedEpc) {
+            $clean = ['ERROR=POWER_VERIFY_FAILED'];
+            $exitCode = 1;
+        } else {
+            $clean = $action === 'status' ? array_values(array_filter($lines, function ($line) {
+                return $line === 'OK' || $line === 'CONNECTED=1' ||
+                    preg_match('/\A(?:COM|PORT|BAUDRATE|TIMEOUT_MS|POWER)=/', $line);
+            })) : [$powerLines[0], 'OK'];
+        }
     } else {
         $clean = array_values(array_filter($lines, function ($line) {
             return $line === 'OK' || preg_match('/\A(?:VERSION|COM|PORT|BAUDRATE|TIMEOUT_MS|POWER)=/', $line);
@@ -71,6 +98,41 @@ function parseResult(string $action, string $stdout, string $stderr, int $exitCo
     }
     return ['ok' => $exitCode === 0, 'accion' => $action, 'resultado' => implode("\n", $clean),
         'exit_code' => $exitCode, 'stderr' => trim($stderr)];
+}
+
+function runPowerChange(string $baseDir, string $power, callable $operation): array
+{
+    // Preparar el archivo antes de tocar el dispositivo. Guardar solo tras ACK y lectura verificados.
+    $directory = $baseDir . '/runtime';
+    $destination = $directory . '/antenna-power.json';
+    if (file_exists($destination) && !is_file($destination)) {
+        return ['ERROR=POWER_STORAGE_UNAVAILABLE', 'runtime/antenna-power.json debe ser un archivo.', 1];
+    }
+    if ((!is_dir($directory) && !@mkdir($directory, 0700, true)) || !is_writable($directory)) {
+        return ['ERROR=POWER_STORAGE_UNAVAILABLE', 'Sin permiso para runtime; en Linux ejecuta sudo bash install.sh.', 1];
+    }
+    $temporary = @tempnam($directory, '.power-');
+    if ($temporary === false || realpath(dirname($temporary)) !== realpath($directory)) {
+        if ($temporary !== false) @unlink($temporary);
+        return ['ERROR=POWER_STORAGE_UNAVAILABLE', '', 1];
+    }
+    try {
+        $contents = json_encode(['power' => (int) $power]) . "\n";
+        if (@file_put_contents($temporary, $contents) !== strlen($contents) ||
+            !@chmod($temporary, 0600)) {
+            return ['ERROR=POWER_STORAGE_UNAVAILABLE', '', 1];
+        }
+        $execution = $operation();
+        $result = parseResult('set-power', $execution[0], $execution[1], $execution[2], $power);
+        if (!$result['ok']) return $execution;
+        if (!@rename($temporary, $destination)) {
+            return ['ERROR=POWER_SAVE_FAILED',
+                'La potencia del lector cambio, pero no pudo guardarse. Consulta get-power y revisa permisos antes de repetir.', 1];
+        }
+        return $execution;
+    } finally {
+        if (is_file($temporary)) @unlink($temporary);
+    }
 }
 
 function commandLine(array $arguments, bool $windows): string
@@ -154,7 +216,7 @@ function handleRequest(array $request, string $baseDir, bool $windows, callable 
     $action = $request['action'] ?? null;
     if ($action === null || $action === '') return failure(null, 'ACTION_REQUIRED', "Parametro 'action' requerido");
     if (!is_string($action)) return failure(null, 'ACTION_INVALID', 'Parametro action invalido');
-    if (!in_array($action, ['status', 'version', 'inventory', 'read-epc', 'write-epc', 'clear'], true)) {
+    if (!in_array($action, ['status', 'version', 'inventory', 'read-epc', 'write-epc', 'clear', 'get-power', 'set-power'], true)) {
         return failure($action, 'UNKNOWN_ACTION', 'Accion no permitida: ' . $action);
     }
     $params = [];
@@ -168,6 +230,10 @@ function handleRequest(array $request, string $baseDir, bool $windows, callable 
             $words = normalizeWords($request['palabras'] ?? 6);
             $params[] = $words;
             $expected = str_repeat('0', (int) $words * 4);
+        } elseif ($action === 'set-power') {
+            if (!isset($request['power'])) return failure($action, 'POWER_REQUIRED', "Falta parametro 'power'");
+            $expected = normalizePower($request['power']);
+            $params[] = $expected;
         }
     } catch (\InvalidArgumentException $error) {
         return failure($action, $error->getMessage());
@@ -176,14 +242,14 @@ function handleRequest(array $request, string $baseDir, bool $windows, callable 
     if (!is_file($bridge)) return failure($action, 'BRIDGE_NOT_FOUND', 'Bridge no encontrado: ' . $bridge);
     $arguments = array_merge($windows ? [$bridge, $action] : ['python3', $bridge, $action], $params);
     try {
-        if ($runner !== null) {
-            // Inyeccion solo desde PHP para pruebas; no se controla por parametros HTTP.
-            $execution = $runner($arguments);
-        } else {
-            $execution = withReaderLock($baseDir, function () use ($arguments, $windows, $baseDir) {
-                return runProcess(commandLine($arguments, $windows), $baseDir);
-            });
-        }
+        // El bloqueo cubre la respuesta del pad y el guardado: la siguiente lectura ve el nuevo valor.
+        $execution = withReaderLock($baseDir, function () use ($arguments, $windows, $baseDir, $action, $expected, $runner) {
+            $operation = function () use ($runner, $arguments, $windows, $baseDir) {
+                // Inyeccion solo desde PHP para pruebas; no se controla por parametros HTTP.
+                return $runner !== null ? $runner($arguments) : runProcess(commandLine($arguments, $windows), $baseDir);
+            };
+            return $action === 'set-power' ? runPowerChange($baseDir, $expected, $operation) : $operation();
+        });
         return parseResult($action, $execution[0], $execution[1], $execution[2], $expected);
     } catch (\Throwable $error) {
         return failure($action, 'BRIDGE_EXCEPTION', '', $error->getMessage());

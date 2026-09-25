@@ -30,6 +30,9 @@ function setup(fetchImplementation = async () => reply({ok: true, resultado: 'OK
         ['clear', [['palabras', '6']]],
         ['read-epc', []],
         ['inventory', []],
+        ['status', []],
+        ['get-power', []],
+        ['set-power', [['power', '15']]],
     ];
     const forms = definitions.map(([action, fields]) => {
         const button = Object.assign(textNode('Ejecutar ' + action), {disabled: true});
@@ -143,6 +146,50 @@ test('Vaciar EPC transmite las 6 palabras fijas del formulario', async () => {
     const form = app.form('clear');
     await app.submit(form);
     assert.deepEqual(Array.from(app.calls[0].options.body), [['action', 'clear'], ['palabras', '6']]);
+    app.assertReleased(form);
+});
+
+test('status muestra conexion comprobada solo cuando la operacion tuvo exito', async () => {
+    for (const data of [
+        {ok: true, resultado: 'OK\nCONNECTED=1\nCOM=COM5\nPOWER=10'},
+        {ok: false, resultado: 'ERROR=READER_NOT_RESPONDING'},
+    ]) {
+        const app = setup(async () => reply(data));
+        const form = app.form('status');
+        await app.submit(form);
+        assert.deepEqual(Array.from(app.calls[0].options.body), [['action', 'status']]);
+        assert.equal(form.result.dataset.state, data.ok ? 'success' : 'error');
+        if (data.ok) assert.match(form.result.status.textContent, /conectado y responde/);
+        else assert.doesNotMatch(form.result.status.textContent, /conectado y responde/);
+        app.assertReleased(form);
+    }
+});
+
+test('potencia usa las acciones nuevas y conserva la lectura confirmada en su tarjeta', async () => {
+    for (const action of ['get-power', 'set-power']) {
+        const data = {ok: true, resultado: 'POWER=15\nOK'};
+        const app = setup(async () => reply(data));
+        const form = app.form(action);
+        await app.submit(form);
+        assert.deepEqual(Array.from(app.calls[0].options.body), action === 'get-power'
+            ? [['action', 'get-power']] : [['action', 'set-power'], ['power', '15']]);
+        assert.match(form.result.status.textContent, action === 'get-power' ? /Potencia actual: 15/ : /Potencia aplicada: 15/);
+        assert.deepEqual(JSON.parse(form.result.output.textContent), data);
+        assert.ok(app.forms.filter(item => item !== form).every(item => item.result.hidden));
+        app.assertReleased(form);
+    }
+});
+
+test('potencia invalida no se envia y un fallo de red no repite el cambio', async () => {
+    const app = setup(async () => { throw new Error('Sin conexion'); });
+    const form = app.form('set-power');
+    form.valid = false;
+    await app.submit(form);
+    assert.equal(app.calls.length, 0);
+    form.valid = true;
+    await app.submit(form);
+    assert.equal(app.calls.length, 1);
+    assert.match(form.result.output.textContent, /Consulta la potencia antes de repetir/);
     app.assertReleased(form);
 });
 

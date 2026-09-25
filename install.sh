@@ -74,6 +74,18 @@ python3 -c 'import serial' || fail 'Falta pySerial para el Python del sistema.'
 php -l "$project_dir/PADBridge.php"
 php -l "$project_dir/lib/Bridge.php"
 
+# Solo esta carpeta local necesita escritura para conservar la potencia elegida.
+runtime_dir="$project_dir/runtime"
+[[ ! -L $runtime_dir ]] || fail 'runtime no debe ser un enlace simbolico.'
+if [[ $check_only == false ]]; then
+    install -d -m 0700 -o "$web_user" -g "$(id -gn "$web_user")" -- "$runtime_dir"
+fi
+[[ -d $runtime_dir ]] || fail 'Falta runtime. Ejecuta sudo bash install.sh para preparar los permisos de potencia.'
+runuser -u "$web_user" -- test -w "$runtime_dir" && runuser -u "$web_user" -- test -x "$runtime_dir" || fail "$web_user no puede escribir en runtime. Ejecuta sudo bash install.sh con el usuario PHP correcto."
+if [[ -e $runtime_dir/antenna-power.json ]]; then
+    runuser -u "$web_user" -- test -r "$runtime_dir/antenna-power.json" || fail "$web_user no puede leer runtime/antenna-power.json."
+fi
+
 # Leer o ajustar la constante sin importar ni ejecutar el controlador del lector.
 reader_port=$(python3 - "$project_dir/linux/OR2103Bridge.py" "$requested_port" <<'PY'
 import ast

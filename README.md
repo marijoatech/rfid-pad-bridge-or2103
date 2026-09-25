@@ -38,7 +38,7 @@ se solicita una operación.
 ## Ayuda visual en el navegador
 
 Abre [la guía del bridge](http://localhost/rfid-bridge/PADBridge.php) sin
-parámetros. Muestra las seis acciones, ejemplos de parámetros y respuestas,
+parámetros. Muestra las acciones disponibles, ejemplos de parámetros y respuestas,
 el relleno del EPC y botones para operar el pad. Cada resultado aparece debajo
 de su acción, en la misma página, sin abrir otra pestaña.
 
@@ -48,6 +48,12 @@ siempre `000000000000000000000000` (24 ceros). Envía 6 palabras de forma fija,
 sin pedir una cantidad al usuario. Una etiqueta detectada con el EPC vacío
 devuelve `DETECTED=000000000000000000000000` tanto en lectura como en inventario.
 `NO_TAG` indica que no se detectó ninguna etiqueta, no que su EPC esté en ceros.
+
+**Comprobar conexión** consulta el lector: un puerto configurado o abierto no
+basta para devolver éxito. **Potencia de la antena** permite consultar el valor
+actual o aplicar un entero entre 5 y 30. El campo propone 10 inicialmente;
+pulsa **Consultar potencia** para conocer el valor real. Las respuestas aparecen
+en la misma tarjeta, sin cambiar de página.
 
 La guía necesita JavaScript para ejecutar los botones, utiliza POST y no envía
 comandos al cargarse. Mientras espera una respuesta, bloquea los botones para
@@ -75,6 +81,8 @@ no elimina funciones ni cambia las llamadas de Marijoa.
 - Comprueba la configuración de Apache y reinicia Apache y los servicios
   PHP-FPM activos para que tomen los nuevos permisos. Programa esta instalación
   cuando puedas reiniciar esos servicios si alojan otras aplicaciones.
+- Crea `runtime/` con propietario PHP y permisos `0700` para guardar la potencia
+  de esta máquina. No da permisos de escritura sobre el resto del proyecto.
 - Comprueba archivos, dependencias y permisos del dispositivo como el usuario de PHP.
 - Comprueba que la URL del bridge devuelva JSON, sin enviar comandos al lector.
 
@@ -135,8 +143,9 @@ conectados, identifica el pad antes de elegirlo; el instalador no adivina el mod
 **Linux todavía no lee `config.json`.** `--port` actualiza únicamente la
 constante `PORT` en `linux/OR2103Bridge.py`. Antes del primer cambio guarda una
 copia en `linux/OR2103Bridge.py.install-backup`. Conserva ese ajuste al actualizar
-el repositorio. Las constantes de velocidad y potencia siguen en Python:
-`BAUD = 115200` y `POWER_HEX = "0A"`.
+el repositorio. La velocidad sigue en Python: `BAUD = 115200`. La potencia se
+puede cambiar desde la guía o con `set-power`; el valor local guardado tiene
+prioridad sobre la potencia predeterminada del controlador.
 
 ## Comprobar una instalación existente
 
@@ -206,7 +215,9 @@ con el pad y las etiquetas utilizados.
 | --- | --- | --- |
 | `read-epc` | Implementada | Devuelve el primer EPC; conserva la respuesta inicial |
 | `inventory` | Implementada | Devuelve los EPC detectados sin duplicados |
-| `status` | Devuelve configuración; no comprueba la conexión | Devuelve configuración; no abre el puerto |
+| `status` | Comprueba una respuesta del pad y devuelve su potencia actual | Comprueba una respuesta del pad y devuelve su potencia actual |
+| `get-power` | Consulta la potencia actual | Consulta la potencia actual |
+| `set-power&power=15` | Aplica y comprueba el valor; guarda el ajuste local | Aplica y comprueba el valor; guarda el ajuste local |
 | `version` | Consulta la versión del lector | Devuelve `ERROR=VERSION_NOT_SUPPORTED`, con `ok=false` |
 | `write-epc&epc=...` | Implementada | Implementada; conserva los comandos de escritura existentes |
 | `clear&palabras=6` | Escribe un EPC de ceros | Escribe un EPC de ceros; respeta `palabras` |
@@ -225,8 +236,39 @@ Límites y pendientes:
   valida lectura, inventario y escritura con una etiqueta de prueba en Debian.
 - La API no incluye autenticación y acepta modificaciones mediante GET.
   Restringe su acceso en Apache o en la red antes de habilitar otros equipos.
-- Linux utiliza las constantes de Python. La carga de `config.json` en Windows
-  también tiene pendiente corregir la ubicación del archivo.
+- Linux utiliza las constantes de Python para puerto, velocidad y tiempos.
+  Windows carga su sección de `config.json` desde la raíz del proyecto.
+
+## Conexión y potencia de la antena
+
+`status` abre el puerto configurado y consulta al lector. Solo devuelve `ok=true`
+si recibe una respuesta válida; no necesita una etiqueta sobre el pad. El
+resultado incluye `CONNECTED=1`, `COM` o `PORT`, `BAUDRATE`, `TIMEOUT_MS` y la
+potencia actual en `POWER`. Un puerto ausente, ocupado o un lector que no
+responde producen `ok=false`. Consultar `status` o `get-power` no cambia la
+potencia ni escribe etiquetas.
+
+```bash
+curl 'http://localhost/rfid-bridge/PADBridge.php?action=status'
+curl 'http://localhost/rfid-bridge/PADBridge.php?action=get-power'
+curl -X POST -d 'action=set-power&power=15' 'http://localhost/rfid-bridge/PADBridge.php'
+```
+
+`power` debe ser un entero entre **5 y 30**, el rango admitido por este bridge.
+`set-power` comprueba el valor informado por el pad después del cambio. En caso
+de éxito, ambas operaciones devuelven `POWER=15\nOK` para ese ejemplo.
+
+La API guarda el valor confirmado en `runtime/antenna-power.json`, un archivo
+local excluido de Git. Las lecturas y escrituras vuelven a aplicar ese ajuste;
+así no se pierde al iniciar el siguiente proceso o al actualizar el código.
+Sin un ajuste guardado se usa la potencia predeterminada del controlador
+(10 en la configuración incluida). Cada máquina conserva su propio valor.
+
+En una instalación Linux existente, ejecuta `sudo bash install.sh` después de
+actualizar para preparar `runtime/` y sus permisos. `--check` solo los comprueba
+y no los modifica. En Windows, el usuario que ejecuta PHP necesita permiso de
+escritura en `runtime/`. Si no se puede guardar el ajuste, la API devuelve un
+error; consulta la potencia para saber qué valor quedó aplicado al pad.
 
 ## Compatibilidad con Marijoa
 
@@ -295,7 +337,10 @@ Ejecutar `bash install.sh` no requiere aplicar `chmod +x` al script.
 
 ## Windows
 
-PHP utiliza `windows/OR2103Bridge.exe` y `windows/OR2127LIB.dll`.
+PHP utiliza `windows/OR2103Bridge.exe` y `windows/OR2127LIB.dll`. El puerto, la
+velocidad, el tiempo de espera y la potencia predeterminada se leen de la
+sección `windows` de `config.json`, en la raíz del proyecto. El ajuste local de
+`runtime/antenna-power.json` tiene prioridad para la potencia.
 Para compilar el fuente principal, ejecuta desde una consola Windows:
 
 ```bat
@@ -317,6 +362,7 @@ cd /var/www/html/rfid-bridge
 sudo git status --short
 sudo git diff
 sudo git pull --ff-only
+sudo bash install.sh
 sudo bash install.sh --check
 ```
 
