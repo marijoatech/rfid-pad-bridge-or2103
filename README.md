@@ -280,13 +280,34 @@ guía no repite comandos automáticamente.
 
 En la prueba física del OR2103 realizada en Linux se reprodujo un bloqueo tras
 configurar automáticamente el zumbador con el comando `0x13`. Se retiró ese
-comando de la inicialización. Linux conserva el pitido puntual `0x19`, comprobado
-por separado. También se retiró la configuración automática del área de lectura
-HID (`0x43`): las operaciones USB conservan el área configurada en el lector.
-Los comandos de escritura y borrado de EPC se conservan. La validación física
-de esta corrección en Windows queda pendiente.
+comando de la inicialización y de las operaciones automáticas en ambos sistemas.
+Se conserva el pitido puntual `0x19`. En Windows, la parada de inventario debe
+recibir su confirmación antes de cerrar el puerto, y el pitido utiliza un envío
+que espera la respuesta del lector. Estos cambios permiten seguir leyendo,
+consultando el estado y ajustando la potencia entre operaciones.
+También se retiró la configuración automática del área de lectura de modo
+automático o disparado (`0x43`): las operaciones conservan el área configurada
+en el lector. Los comandos de escritura y borrado de EPC se conservan.
 La reconexión USB es una medida de recuperación cuando no responde; no es un
 paso obligatorio después de cada cambio de potencia.
+
+## Validación física — 25 de septiembre de 2026
+
+Se probó un OR2103 en modo USB con adaptador CP2102: `/dev/ttyUSB0` en
+Linux Mint y `COM5` en Windows con WAMP. Se realizaron operaciones consecutivas
+mediante `PADBridge.php`, con una etiqueta cuyo EPC contiene 24 ceros.
+
+| Comprobación | Linux | Windows |
+| --- | --- | --- |
+| Estado y potencia reales | `CONNECTED=1`, `POWER=10` | `CONNECTED=1`, `POWER=10` |
+| Lectura e inventario con etiqueta | Devuelven `DETECTED=000000000000000000000000` | Devuelven `DETECTED=000000000000000000000000` |
+| Cambiar potencia y continuar operando | Aplicar `9`, leer y consultar; restaurar `10`, inventariar y leer: correcto | Aplicar `9`, leer e inventariar; restaurar `10` y leer: correcto |
+| Lectura e inventario sin etiqueta | Ambos devuelven `NO_TAG`; estado y potencia posteriores correctos | Ambos devuelven `NO_TAG`; lecturas y consultas posteriores mantienen conexión y potencia `10` |
+| Escritura y vaciado físicos en esta revisión | No realizados en esta validación | No realizados en esta validación |
+
+Las secuencias con y sin etiqueta devolvieron `ok=true`, `exit_code=0` y
+`stderr` vacío. La potencia quedó en `10`. Las pruebas automáticas conservan los formatos
+usados por Marijoa; esta validación no incluye escribir ni vaciar una etiqueta.
 
 ## Compatibilidad con Marijoa
 
@@ -366,6 +387,14 @@ Para compilar el fuente principal, ejecuta desde una consola Windows:
 cd windows
 build-csc.bat
 ```
+
+El SDK `OR2127LIB.dll` detiene el inventario de forma asíncrona. El bridge
+espera su ACK válido antes de devolver `DETECTED` o `NO_TAG` y antes de cerrar
+COM; si falta la confirmación devuelve `ERROR=READER_NOT_RESPONDING:STOP`.
+El aviso sonoro usa `ReaderUtil.SendGetData` y consume su respuesta antes de
+cerrar. Se evita `SendBuzzer` porque esa ruta del SDK purga la salida serial
+inmediatamente después de escribir. Un fallo del aviso no invalida un EPC
+ya leído y con inventario detenido.
 
 El `.csproj` incluye una segunda implementación en `src/Program.cs` que entra
 en conflicto con el fuente principal. El script anterior compila únicamente

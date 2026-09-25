@@ -160,9 +160,8 @@ public class OR2103Bridge
 	{
 		string msg;
 
-		// Importante: cerrar inventario anterior antes de leer
-		try { readerManager.StopInventory(); } catch { }
-		Thread.Sleep(300);
+        // El SDK detiene en una tarea: esperar su ACK antes de configurar o cerrar el puerto.
+        StopInventoryConfirmed();
 
         // Cada operacion debe conservar la potencia elegida, no continuar si el lector la rechaza.
         bool powerSet;
@@ -356,59 +355,159 @@ public class OR2103Bridge
     private static int Inventory(bool onlyFirst)
     {
         lock (TagsLock) { Tags.Clear(); }
-
         readerManager.InventoryTag += ReaderManager_InventoryTag;
-
         string msg;
-        bool started = readerManager.Inventory(out msg);
+        bool started;
+        try
+        {
+            started = readerManager.Inventory(out msg);
+            if (started)
+            {
+                DateTime end = DateTime.Now.AddMilliseconds(TimeoutMs);
+                while (DateTime.Now < end)
+                {
+                    lock (TagsLock)
+                    {
+                        if (onlyFirst && Tags.Count > 0) break;
+                    }
+                    Thread.Sleep(50);
+                }
+            }
+        }
+        finally
+        {
+            try { StopInventoryConfirmed(); }
+            finally { readerManager.InventoryTag -= ReaderManager_InventoryTag; }
+        }
 
         if (!started)
         {
-            readerManager.InventoryTag -= ReaderManager_InventoryTag;
             Out("ERROR=INVENTORY_FAILED:" + Clean(msg));
             return 1;
         }
-
-        DateTime end = DateTime.Now.AddMilliseconds(TimeoutMs);
-
-        while (DateTime.Now < end)
-        {
-            lock (TagsLock)
-            {
-                if (onlyFirst && Tags.Count > 0) break;
-            }
-
-            Thread.Sleep(50);
-        }
-
-        try { readerManager.StopInventory(); } catch { }
-        readerManager.InventoryTag -= ReaderManager_InventoryTag;
-
         List<string> copy;
         lock (TagsLock) { copy = new List<string>(Tags); }
-
         if (copy.Count == 0)
         {
             Out("NO_TAG");
             return 0;
         }
-
         if (onlyFirst)
         {
-            // Aviso puntual (0x19), sin cambiar la configuracion LED/buzzer (0x13).
-            // La lectura ya esta confirmada: un fallo del aviso no invalida el EPC.
-            try { readerManager.SendBuzzer(out msg); } catch { }
+            // Aviso puntual con respuesta consumida antes de cerrar COM.
+            TryBeepConfirmed();
             Out("DETECTED=" + copy[0]);
-		}
+        }
         else
         {
-            foreach (string epc in copy)
+            foreach (string epc in copy) Out("DETECTED=" + epc);
+        }
+        return 0;
+    }
+
+    private static bool TryBeepConfirmed()
+    {
+        try
+        {
+            // SendBuzzer usa Send y purga TX inmediatamente. La API sincronica espera el ACK.
+            byte[] reply = ReaderUtil.GetInstance().SendGetData(new byte[] { 0xA5, 0x00, 0x19, 0x19 });
+            return reply != null && reply.Length == 5 && reply[0] == 0xA5 && reply[1] == 1 &&
+                reply[2] == 0x19 && reply[3] == 0 && reply[4] == 0x1A;
+        }
+        catch { return false; }
+    }
+
+    private static void StopInventoryConfirmed()
+    {
+        using (StopAcknowledgement acknowledgement = new StopAcknowledgement())
+        {
+            readerManager.DataTransmission += acknowledgement.OnData;
+            try
             {
-                Out("DETECTED=" + epc);
+                try { readerManager.StopInventory(); }
+                catch { throw new InvalidOperationException("READER_NOT_RESPONDING:STOP"); }
+                // El SDK espera 50 ms antes de transmitir y hasta 600 ms por respuesta.
+                if (!acknowledgement.Wait(1500))
+                    throw new InvalidOperationException("READER_NOT_RESPONDING:STOP");
+                string error = acknowledgement.Error;
+                if (error.Length > 0) throw new InvalidOperationException(error);
+            }
+            finally { readerManager.DataTransmission -= acknowledgement.OnData; }
+        }
+    }
+
+    private sealed class StopAcknowledgement : IDisposable
+    {
+        private readonly object gate = new object();
+        private readonly List<byte> buffer = new List<byte>();
+        private readonly ManualResetEventSlim completed = new ManualResetEventSlim(false);
+        private bool waitingForReply;
+        private bool finished;
+        private bool disposed;
+        private string error = "";
+
+        public string Error { get { lock (gate) { return error; } } }
+        public bool Wait(int milliseconds) { return completed.Wait(milliseconds); }
+
+        public void OnData(byte[] data, bool isSend)
+        {
+            lock (gate)
+            {
+                if (disposed || finished || data == null) return;
+                if (isSend)
+                {
+                    // Solo correlacionar respuestas recibidas despues del comando de esta parada.
+                    if (data.Length == 4 && data[0] == 0xA5 && data[1] == 0 && data[2] == 0x54 && data[3] == 0x54)
+                    {
+                        waitingForReply = true;
+                        buffer.Clear();
+                    }
+                    return;
+                }
+                if (!waitingForReply) return;
+                buffer.AddRange(data);
+                while (buffer.Count >= 4)
+                {
+                    int start = buffer.IndexOf(0xA5);
+                    if (start < 0) { buffer.Clear(); return; }
+                    if (start > 0) buffer.RemoveRange(0, start);
+                    if (buffer.Count < 4) return;
+                    int length = buffer[1] + 4;
+                    // No buscar un ACK dentro del EPC de una trama 0x55 incompleta.
+                    if (buffer.Count < length) return;
+                    byte[] frame = buffer.GetRange(0, length).ToArray();
+                    buffer.RemoveRange(0, length);
+                    if (frame[2] != 0x54) continue;
+                    int checksum = 0;
+                    for (int i = 1; i < frame.Length - 1; i++) checksum += frame[i];
+                    if ((checksum & 0xFF) != frame[frame.Length - 1])
+                        Finish("READER_CHECKSUM:STOP");
+                    else if (frame.Length != 5 || frame[1] != 1)
+                        Finish("READER_RESPONSE_INVALID:STOP");
+                    else if (frame[3] != 0)
+                        Finish("READER_STATUS_" + frame[3].ToString("X2") + ":STOP");
+                    else
+                        Finish("");
+                    return;
+                }
             }
         }
 
-        return 0;
+        private void Finish(string failure)
+        {
+            error = failure;
+            finished = true;
+            completed.Set();
+        }
+
+        public void Dispose()
+        {
+            lock (gate)
+            {
+                disposed = true;
+                completed.Dispose();
+            }
+        }
     }
 
     private static void ReaderManager_InventoryTag(TagInfo tagInfo)
