@@ -190,7 +190,48 @@ test('potencia invalida no se envia y un fallo de red no repite el cambio', asyn
     await app.submit(form);
     assert.equal(app.calls.length, 1);
     assert.match(form.result.output.textContent, /Consulta la potencia antes de repetir/);
+    assert.doesNotMatch(form.result.status.textContent, /Desenchufa/);
     app.assertReleased(form);
+});
+
+test('lector sin respuesta muestra recuperacion USB y conserva JSON sin repetir comandos', async () => {
+    for (const action of ['status', 'read-epc', 'inventory', 'get-power', 'set-power', 'write-epc', 'clear']) {
+        for (const error of ['READER_NOT_RESPONDING', 'CONNECT_FAILED:No se pudo abrir el puerto']) {
+            const data = {ok: false, accion: action, resultado: 'ERROR=' + error, exit_code: 2, stderr: ''};
+            const app = setup(async () => reply(data));
+            const form = app.form(action);
+            await app.submit(form);
+            assert.equal(app.calls.length, 1, 'No reintentar una operacion sin confirmacion');
+            assert.equal(form.result.dataset.state, 'error');
+            assert.match(form.result.status.textContent, /Desenchufa el USB del lector, espera 10 segundos y vuelve a enchufarlo en modo USB\./);
+            if (error.startsWith('CONNECT_FAILED')) assert.match(form.result.status.textContent, /puerto configurado/);
+            if (action === 'set-power') assert.match(form.result.status.textContent, /consulta la potencia antes de repetir/);
+            else if (action === 'write-epc' || action === 'clear') assert.match(form.result.status.textContent, /lee el EPC antes de repetir/);
+            else assert.doesNotMatch(form.result.status.textContent, /antes de repetir/);
+            assert.deepEqual(JSON.parse(form.result.output.textContent), data, 'La indicacion no altera el JSON de la API');
+            app.assertReleased(form);
+        }
+    }
+});
+
+test('validacion, NO_TAG y otros errores no piden reconectar el USB', async () => {
+    for (const data of [
+        {ok: false, resultado: 'ERROR=POWER_INVALID'},
+        {ok: false, resultado: 'ERROR=EPC_LENGTH_MUST_BE_WORD_ALIGNED'},
+        {ok: false, resultado: 'ERROR=BRIDGE_BUSY'},
+        {ok: false, resultado: 'ERROR=POWER_SAVE_FAILED'},
+        {ok: false, resultado: 'ERROR=READER_NOT_RESPONDING_EXTRA'},
+        {ok: false, resultado: 'NO_TAG'},
+        {ok: true, resultado: 'NO_TAG'},
+        {ok: true, resultado: 'POWER=15\nOK'},
+    ]) {
+        const app = setup(async () => reply(data));
+        const form = app.form('set-power');
+        await app.submit(form);
+        assert.doesNotMatch(form.result.status.textContent, /Desenchufa/);
+        assert.deepEqual(JSON.parse(form.result.output.textContent), data);
+        app.assertReleased(form);
+    }
 });
 
 test('NO_TAG es una lectura valida y conserva el JSON', async () => {

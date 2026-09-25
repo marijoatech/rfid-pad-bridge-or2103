@@ -53,6 +53,18 @@
                     successMessage = (action === 'set-power' ? 'Potencia aplicada: ' : 'Potencia actual: ') + powerMatch[1] + '.';
                 }
                 status.textContent = data.ok ? successMessage : 'La operación devolvió un error.';
+                const connectionError = data.resultado.match(/^ERROR=(READER_NOT_RESPONDING|CONNECT_FAILED)(?::.*)?$/m);
+                if (!data.ok && connectionError) {
+                    status.textContent = (connectionError[1] === 'CONNECT_FAILED'
+                        ? 'Revisa la conexión USB y el puerto configurado. '
+                        : 'El lector no responde. ')
+                        + 'Desenchufa el USB del lector, espera 10 segundos y vuelve a enchufarlo en modo USB.';
+                    if (action === 'set-power') {
+                        status.textContent += ' Después de reconectarlo, consulta la potencia antes de repetir: el pad podría haber aplicado el cambio.';
+                    } else if (action === 'write-epc' || action === 'clear') {
+                        status.textContent += ' Cuando vuelva a responder, lee el EPC antes de repetir: el pad podría haber realizado la operación.';
+                    }
+                }
                 // La respuesta del dispositivo es texto; nunca interpretarla como HTML.
                 output.textContent = JSON.stringify(data, null, 2);
             } catch (error) {

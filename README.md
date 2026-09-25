@@ -270,6 +270,24 @@ y no los modifica. En Windows, el usuario que ejecuta PHP necesita permiso de
 escritura en `runtime/`. Si no se puede guardar el ajuste, la API devuelve un
 error; consulta la potencia para saber qué valor quedó aplicado al pad.
 
+Si el lector deja de responder, la guía muestra esta indicación en la tarjeta:
+**Desenchufa el USB del lector, espera 10 segundos y vuelve a enchufarlo en modo
+USB.** Comprueba de nuevo la conexión. Si el fallo ocurrió al cambiar la potencia,
+consulta el valor después de reconectar antes de repetir el cambio: podría
+haberse aplicado sin confirmación. Si ocurrió al grabar o vaciar un EPC, lee la
+etiqueta antes de repetir la operación. La API conserva el error y su JSON; la
+guía no repite comandos automáticamente.
+
+En la prueba física del OR2103 realizada en Linux se reprodujo un bloqueo tras
+configurar automáticamente el zumbador con el comando `0x13`. Se retiró ese
+comando de la inicialización. Linux conserva el pitido puntual `0x19`, comprobado
+por separado. También se retiró la configuración automática del área de lectura
+HID (`0x43`): las operaciones USB conservan el área configurada en el lector.
+Los comandos de escritura y borrado de EPC se conservan. La validación física
+de esta corrección en Windows queda pendiente.
+La reconexión USB es una medida de recuperación cuando no responde; no es un
+paso obligatorio después de cada cambio de potencia.
+
 ## Compatibilidad con Marijoa
 
 No requiere modificar `grabarRFID`, `escanearTAGsRFID` ni `checkTAGRFID` en
@@ -327,6 +345,7 @@ permisos CORS existentes.
 | HTTP devuelve código PHP o HTML | Configuración de PHP en Apache; consulta sus registros |
 | `ERROR=UNKNOWN_ACTION` | Revisa el nombre de la acción; `status` e `inventory` están implementados. Actualiza si todavía usas una revisión anterior |
 | `ERROR=VERSION_NOT_SUPPORTED` | La consulta de versión del lector aún no está implementada en Linux |
+| `ERROR=READER_NOT_RESPONDING` o `ERROR=CONNECT_FAILED` | Revisa la conexión USB y el puerto configurado. Desenchufa el USB del lector, espera 10 segundos y vuelve a enchufarlo en modo USB. Comprueba la conexión y consulta la potencia o lee el EPC antes de repetir un cambio |
 | `ERROR=BRIDGE_BUSY` | Otra petición ocupa el bridge; espera a que termine antes de repetir |
 | `ERROR=BRIDGE_TIMEOUT` | El proceso excedió el límite; revisa puerto y lector. Antes de repetir una escritura, lee el EPC para saber si se aplicó |
 | `NO_TAG` | Posición y compatibilidad de la etiqueta; no demuestra por sí solo un problema de instalación |

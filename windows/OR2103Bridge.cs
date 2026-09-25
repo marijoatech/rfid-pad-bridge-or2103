@@ -122,13 +122,8 @@ public class OR2103Bridge
         }
 		finally
 		{
-			string m;
-
-			// No forzar StopInventory aqui, porque despues de write puede colgar
-            if (action == "inventory" || action == "read-epc" || action == "write-epc" || action == "clear")
-            {
-                try { readerManager.SetLedBuzzer(0, out m); } catch { }
-            }
+            // No configurar LED/buzzer (0x13): el OR2103 probado deja de aceptar comandos.
+            // Cerrar el puerto sin enviar configuraciones adicionales al lector.
             TryClose(readerManager);
             if (action == "inventory" || action == "read-epc" || action == "write-epc" || action == "clear")
                 Thread.Sleep(800);
@@ -179,11 +174,7 @@ public class OR2103Bridge
         catch { throw new InvalidOperationException("POWER_VERIFY_FAILED"); }
         if (actualPower != Power) throw new InvalidOperationException("POWER_VERIFY_FAILED");
 
-		// EPC area
-		try { readerManager.SetReadArea(0, 0, 0, out msg); } catch { }
-
-		// Buzzer OFF automatico
-		try { readerManager.SetLedBuzzer(0, out msg); } catch { }
+        // Conservar la configuracion de areas del lector; 0x43 corresponde a auto/trigger.
 
 		Thread.Sleep(200);
 	}
@@ -403,13 +394,11 @@ public class OR2103Bridge
         }
 
         if (onlyFirst)
-		{
-			// 🔊 pitido manual SOLO una vez
-			//try { readerManager.SendBuzzer(1, out msg); } catch { }
-			//try { readerManager.SendBuzzer(); } catch { }
-			try { readerManager.SetLedBuzzer(2, out msg); Thread.Sleep(150); readerManager.SetLedBuzzer(0, out msg); } catch { }
-
-			Out("DETECTED=" + copy[0]);
+        {
+            // Aviso puntual (0x19), sin cambiar la configuracion LED/buzzer (0x13).
+            // La lectura ya esta confirmada: un fallo del aviso no invalida el EPC.
+            try { readerManager.SendBuzzer(out msg); } catch { }
+            Out("DETECTED=" + copy[0]);
 		}
         else
         {

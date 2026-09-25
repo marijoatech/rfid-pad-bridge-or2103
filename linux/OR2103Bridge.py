@@ -75,45 +75,90 @@ def set_power(ser, power=None):
     return actual
 
 
-def request_response(ser, cmd, data=b"", data_length=1):
-    """Consulta breve con trama, comando, estado y checksum validados.
+def pop_frame(buffer):
+    """Extraer una trama completa sin buscar cabeceras dentro de sus datos."""
+    start = buffer.find(b"\xA5")
+    if start < 0:
+        buffer.clear()
+        return None
+    if start:
+        del buffer[:start]
+    if len(buffer) < 3:
+        return None
+    frame_length = buffer[1] + 4
+    if len(buffer) < frame_length:
+        return None
+    frame = bytes(buffer[:frame_length])
+    del buffer[:frame_length]
+    if checksum(frame[:-1]) != frame[-1]:
+        raise ValueError("READER_CHECKSUM")
+    return frame
 
-    SDK OR2127LIB: longitud total = byte de longitud + 4; el primer dato
-    es el estado. Se usa solo para potencia, sin cambiar el parser de EPC.
+
+class FrameReader:
+    def __init__(self, ser):
+        self.ser = ser
+        self.buffer = bytearray()
+        self.received = 0
+        self.tag_frames = 0
+
+    def read_frame(self, deadline):
+        while True:
+            frame = pop_frame(self.buffer)
+            if frame is not None:
+                if frame[2] == 0x55:
+                    self.tag_frames += 1
+                return frame
+            if time.monotonic() >= deadline:
+                return None
+            chunk = self.ser.read(256)
+            self.received += len(chunk)
+            self.buffer.extend(chunk)
+
+
+def response_data(frame, data_length):
+    payload = frame[3:-1]
+    if not payload:
+        raise ValueError("READER_RESPONSE_INVALID")
+    if payload[0] != 0:
+        raise ValueError("READER_STATUS_" + format(payload[0], "02X"))
+    if len(payload) != data_length:
+        raise ValueError("READER_RESPONSE_INVALID")
+    return payload
+
+
+def diagnostic(cmd, reader, received_before=0, tags_before=0):
+    # Solo contadores: no volcar EPC, memoria de etiquetas ni bytes recibidos.
+    print("RFID_DIAG CMD=" + format(cmd, "02X") +
+          " RX_BYTES=" + str(reader.received - received_before) +
+          " TAG_FRAMES=" + str(reader.tag_frames - tags_before), file=sys.stderr)
+
+
+def request_response(ser, cmd, data=b"", data_length=1, reader=None, on_tag=None):
+    """Esperar ACK sin perder etiquetas recibidas junto a una respuesta.
+
+    SDK OR2127LIB: longitud total = byte de longitud + 4. Un FrameReader
+    compartido conserva datos pendientes entre START, inventario y STOP.
     """
-    ser.reset_input_buffer()
-    ser.write(command(cmd, data))
-    end = time.monotonic() + TIMEOUT_MS / 1000.0
-    buffer = bytearray()
-    while time.monotonic() < end:
-        buffer.extend(ser.read(256))
-        while len(buffer) >= 3:
-            start = buffer.find(b"\xA5")
-            if start < 0:
-                buffer.clear()
-                break
-            if start:
-                del buffer[:start]
-            if len(buffer) < 3:
-                break
-            frame_length = buffer[1] + 4
-            if len(buffer) < frame_length:
-                break
-            frame = bytes(buffer[:frame_length])
-            del buffer[:frame_length]
-            if frame[2] != cmd:
-                continue
-            if checksum(frame[:-1]) != frame[-1]:
-                raise ValueError("READER_CHECKSUM")
-            payload = frame[3:-1]
-            if not payload:
-                raise ValueError("READER_RESPONSE_INVALID")
-            if payload[0] != 0:
-                raise ValueError("READER_STATUS_" + format(payload[0], "02X"))
-            if len(payload) != data_length:
-                raise ValueError("READER_RESPONSE_INVALID")
-            return payload
-    raise ValueError("READER_NOT_RESPONDING")
+    supplied_reader = reader is not None
+    reader = reader if supplied_reader else FrameReader(ser)
+    received_before, tags_before = reader.received, reader.tag_frames
+    try:
+        if not supplied_reader:
+            ser.reset_input_buffer()
+        ser.write(command(cmd, data))
+        deadline = time.monotonic() + TIMEOUT_MS / 1000.0
+        while True:
+            frame = reader.read_frame(deadline)
+            if frame is None:
+                raise ValueError("READER_NOT_RESPONDING")
+            if frame[2] == 0x55 and on_tag is not None:
+                on_tag(frame)
+            if frame[2] == cmd:
+                return response_data(frame, data_length)
+    except Exception:
+        diagnostic(cmd, reader, received_before, tags_before)
+        raise
 
 
 def read_power(ser):
@@ -197,45 +242,40 @@ def build_write_epc(epc_hex):
     return command(0x57, data)
 
 
+def epc_from_frame(frame):
+    if len(frame) < 5 or frame[2] != 0x55:
+        raise ValueError("READER_RESPONSE_INVALID")
+    if frame[3] != 0:
+        raise ValueError("READER_STATUS_" + format(frame[3], "02X"))
+    if len(frame) < 12:
+        raise ValueError("READER_RESPONSE_INVALID")
+    pc = int.from_bytes(frame[4:6], "big")
+    epc_length = ((pc >> 11) & 0x1F) * 2
+    # Cabecera+estado+PC (6), RSSI (2), antena (1), checksum (1).
+    # Los datos opcionales TID/USER pueden aparecer antes de RSSI/antena.
+    if epc_length < 2 or len(frame) < epc_length + 10:
+        raise ValueError("READER_RESPONSE_INVALID")
+    return frame[6:6 + epc_length].hex().upper()
+
+
 def parse_epcs(buffer):
+    pending = bytearray(buffer)
     epcs = []
-    i = 0
-
-    while i < len(buffer) - 4:
-        if buffer[i] != 0xA5:
-            i += 1
-            continue
-
-        length = buffer[i + 1]
-        frame_len = length + 3
-
-        if i + frame_len > len(buffer):
-            break
-
-        frame = buffer[i:i + frame_len]
-
-        if len(frame) >= 21 and frame[2] == 0x55:
-            epc = frame[5:18].hex().upper()
-
-            if len(epc) > 24:
-                epc = epc[-24:]
-
-            # Una etiqueta con EPC en ceros sigue presente; no confundirla con NO_TAG.
-            if epc:
-                epcs.append(epc)
-
-        i += frame_len
-
-    return epcs
+    while True:
+        frame = pop_frame(pending)
+        if frame is None:
+            return epcs
+        if frame[2] == 0x55:
+            epcs.append(epc_from_frame(frame))
 
 
 def init_reader(ser, buzzer_off=True, power=None):
     power = configured_power() if power is None else normalize_power(power)
     send_hex(ser, "A5 00 32 32")          # get mode
     set_power(ser, power)                 # ACK + lectura verifican el ajuste persistido
-    send_hex(ser, "A5 03 43 00 00 00 46") # read area EPC
-    if buzzer_off:
-        send_hex(ser, "A5 01 13 00 14")   # buzzer off
+    # Inventario usa 0x53; no modificar el area HID/RESERVE mediante 0x43.
+    # Se conserva buzzer_off como argumento compatible. No enviar 0x13:
+    # ese comando dejo al pad sin responder en la prueba fisica de Linux.
 
 
 def inventory(only_first=False):
@@ -245,22 +285,34 @@ def inventory(only_first=False):
     try:
         init_reader(ser, buzzer_off=True, power=power)
         ser.reset_input_buffer()
-
+        reader = FrameReader(ser)
         detected = []
-        try:
-            # La respuesta inicial puede incluir etiquetas, ademas de la confirmacion.
-            buffer = bytearray(send_hex(ser, "A5 00 53 53", 0.05))
-            end = time.monotonic() + TIMEOUT_MS / 1000.0
-            while True:
-                for epc in parse_epcs(buffer):
-                    if epc not in detected:
-                        detected.append(epc)
-                if (only_first and detected) or time.monotonic() >= end:
-                    break
-                buffer.extend(ser.read(512))
-        finally:
-            send_hex(ser, "A5 00 54 54", 0.03)  # stop inventory incluso ante error
 
+        def collect_tag(frame):
+            epc = epc_from_frame(frame)
+            if epc not in detected:
+                detected.append(epc)
+
+        try:
+            # El bloque finally tambien intenta STOP si START no fue confirmado.
+            request_response(ser, 0x53, reader=reader, on_tag=collect_tag)
+            deadline = time.monotonic() + TIMEOUT_MS / 1000.0
+            received_before, tags_before = reader.received, reader.tag_frames
+            try:
+                while not (only_first and detected):
+                    frame = reader.read_frame(deadline)
+                    if frame is None:
+                        break
+                    if frame[2] == 0x55:
+                        collect_tag(frame)
+            except Exception:
+                diagnostic(0x55, reader, received_before, tags_before)
+                raise
+        finally:
+            # No vaciar RX: puede haber etiquetas y ACK juntos o fragmentados.
+            request_response(ser, 0x54, reader=reader, on_tag=collect_tag)
+
+        # Marijoa solo recibe exito despues de confirmar que el inventario paro.
         if detected:
             if only_first:
                 beep(ser)

@@ -1,15 +1,14 @@
 """Compile the actual Windows bridge against a fake SDK; never open a COM port."""
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / 'windows' / 'OR2103Bridge.cs'
+SOURCE = Path(__file__).with_name('OR2103Bridge.cs')
 if not SOURCE.exists():
-    SOURCE = Path(__file__).with_name('OR2103Bridge.cs')
+    SOURCE = ROOT / 'windows' / 'OR2103Bridge.cs'
 CSC = Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 if not CSC.exists():
     CSC = Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Microsoft.NET/Framework/v4.0.30319/csc.exe'
@@ -32,10 +31,11 @@ namespace OR2127LIB {
         }
         public bool SetPower(int power, out string msg) { Log("SetPower:" + power); msg="fake"; wasSet=true; requested=power; return Value("FAKE_SET", "1") == "1"; }
         public void StopInventory() { Log("StopInventory"); }
-        public bool SetReadArea(int a,int b,int c,out string msg) { Log("SetReadArea"); msg=""; return true; }
-        public bool SetLedBuzzer(int mode,out string msg) { Log("SetLedBuzzer:"+mode); msg=""; return true; }
+        public bool SetReadArea(int a,int b,int c,out string msg) { Log("SetReadArea"); msg=""; throw new InvalidOperationException("FORBIDDEN_AUTO_READ_AREA_CONFIGURATION"); }
+        public bool SetLedBuzzer(int mode,out string msg) { Log("SetLedBuzzer:"+mode); msg=""; throw new InvalidOperationException("FORBIDDEN_LED_CONFIGURATION"); }
+        public void SendBuzzer(out string msg) { Log("SendBuzzer"); msg=""; if (Value("FAKE_BEEP_FAIL", "0") == "1") throw new InvalidOperationException("FAKE_BEEP_FAILED"); }
         public bool GetVersion(out string version) { version="V1.2.3"; return true; }
-        public bool Inventory(out string msg) { Log("Inventory"); msg=""; if (InventoryTag != null) InventoryTag(new TagInfo { EPC=Value("FAKE_TAG", "000000000000000001000028") }); return true; }
+        public bool Inventory(out string msg) { Log("Inventory"); msg=""; if (Value("FAKE_INVENTORY", "1") != "1") return false; if (InventoryTag != null && Value("FAKE_NO_TAG", "0") != "1") InventoryTag(new TagInfo { EPC=Value("FAKE_TAG", "000000000000000001000028") }); return true; }
         public bool WriteTag(string pwd,int bank,int start,int words,string data,out string msg) { Log("WriteTag:"+data); msg=""; return true; }
     }
 }
@@ -74,7 +74,11 @@ class WindowsBridgeTests(unittest.TestCase):
             if name.startswith('FAKE_') or name == 'RFID_POWER':
                 del env[name]
         env.update(values)
-        return subprocess.run([str(self.exe), *args], capture_output=True, text=True, env=env, timeout=10, cwd=self.base)
+        result = subprocess.run([str(self.exe), *args], capture_output=True, text=True, env=env, timeout=10, cwd=self.base)
+        # Includes cleanup after failures: command 0x13 must never be sent automatically.
+        self.assertNotIn('CALL=SetLedBuzzer:', result.stderr, 'LED configuration can leave this pad unresponsive')
+        self.assertNotIn('CALL=SetReadArea', result.stderr, 'Tag operations must preserve the auto/trigger read area')
+        return result
 
     def test_status_requires_reply_without_changing_reader(self):
         r = self.run_bridge('status')
@@ -217,6 +221,41 @@ class WindowsBridgeTests(unittest.TestCase):
                     self.assertNotIn('CALL=WriteTag', r.stderr)
                     self.assertNotIn('DETECTED=', r.stdout)
                     self.assertNotIn('WRITTEN=', r.stdout)
+
+    def test_all_supported_actions_avoid_led_and_auto_area_configuration(self):
+        for args in [('status',), ('get-power',), ('set-power','18'), ('version',), ('read-epc',), ('inventory',), ('write-epc','000000000000000001000028'), ('clear','6')]:
+            with self.subTest(args=args):
+                r = self.run_bridge(*args)
+                self.assertEqual(r.returncode, 0, r.stdout)
+                self.assertNotIn('CALL=SetLedBuzzer:', r.stderr)
+                self.assertIn('CALL=DisCon', r.stderr)
+
+    def test_successful_read_sends_one_shot_beep_exactly_once(self):
+        r = self.run_bridge('read-epc')
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(r.stdout.strip(), 'DETECTED=000000000000000001000028')
+        self.assertEqual(r.stderr.splitlines().count('CALL=SendBuzzer'), 1)
+
+    def test_no_beep_for_diagnostics_no_tag_or_failed_read(self):
+        for args, values in [
+            (('status',), {}), (('get-power',), {}), (('set-power','18'), {}),
+            (('read-epc',), {'FAKE_NO_TAG':'1'}),
+            (('read-epc',), {'FAKE_SET':'0'}),
+            (('read-epc',), {'FAKE_INVENTORY':'0'}),
+            (('inventory',), {}),
+        ]:
+            with self.subTest(args=args, values=values):
+                r = self.run_bridge(*args, **values)
+                self.assertNotIn('CALL=SendBuzzer', r.stderr)
+        r = self.run_bridge('read-epc', FAKE_NO_TAG='1')
+        self.assertEqual(r.stdout.strip(), 'NO_TAG')
+
+    def test_beep_failure_does_not_invalidate_confirmed_read(self):
+        r = self.run_bridge('read-epc', FAKE_BEEP_FAIL='1')
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(r.stdout.strip(), 'DETECTED=000000000000000001000028')
+        self.assertEqual(r.stderr.splitlines().count('CALL=SendBuzzer'), 1)
+        self.assertNotIn('ERROR=', r.stdout)
 
     def test_zero_epc_and_write_contract_unchanged(self):
         r = self.run_bridge('read-epc', FAKE_TAG='000000000000000000000000')
