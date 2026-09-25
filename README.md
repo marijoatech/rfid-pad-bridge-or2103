@@ -401,7 +401,7 @@ de PHP y resultado de la prueba física. Así puedes repetir una instalación co
 Desde la raíz del repositorio:
 
 ```bash
-php -n tests/test_api.php
+php tests/test_api.php
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 bash -n install.sh
 ```
@@ -409,6 +409,9 @@ bash -n install.sh
 Las pruebas cubren validación y respuestas de PHP, ejecución y bloqueo de
 procesos, transporte HTTP y operaciones de Python con el puerto simulado.
 No escriben ni borran etiquetas. PHP CLI debe estar disponible en PATH.
+Las pruebas de la API y HTTP cargan la configuración normal de PHP CLI para
+disponer de sus extensiones, como `ctype` y `json`; no agregues `-n`, porque
+en Linux puede deshabilitar esas extensiones.
 
 Con Node.js, comprueba los controles de la ayuda con respuestas simuladas,
 sin acceder a la red ni al pad:

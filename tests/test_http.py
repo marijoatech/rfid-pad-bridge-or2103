@@ -22,7 +22,7 @@ class HttpTests(unittest.TestCase):
         root = pathlib.Path(__file__).resolve().parents[1]
         cls.url = f"http://127.0.0.1:{port}/PADBridge.php"
         cls.server = subprocess.Popen(
-            [php, "-n", "-S", f"127.0.0.1:{port}", "-t", str(root)],
+            [php, "-S", f"127.0.0.1:{port}", "-t", str(root)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         cls.addClassCleanup(cls.stop_server)

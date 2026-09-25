@@ -8,7 +8,7 @@ const {execFileSync} = require('node:child_process');
 
 if (!process.argv[2]) throw new Error('Indica la ruta a compras/Fraccionar.js');
 const source = fs.readFileSync(process.argv[2], 'utf8');
-const fixtures = JSON.parse(execFileSync('php', ['-n', path.join(__dirname, 'test_api.php'), '--fixtures'], {encoding: 'utf8'}));
+const fixtures = JSON.parse(execFileSync('php', [path.join(__dirname, 'test_api.php'), '--fixtures'], {encoding: 'utf8'}));
 
 function extract(name, required = true) {
     const pattern = new RegExp('^(?:async )?function ' + name + '\\s*\\(', 'm');
