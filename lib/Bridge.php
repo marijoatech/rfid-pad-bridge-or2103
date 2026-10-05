@@ -31,6 +31,14 @@ function normalizeWords($value): string
     return (string) (int) $value;
 }
 
+function normalizeExpectedEpc($value): string
+{
+    if (!is_string($value) || !preg_match('/\A[0-9A-Fa-f]{4,124}\z/', $value) || strlen($value) % 4 !== 0) {
+        throw new \InvalidArgumentException('EXPECTED_EPC_INVALID');
+    }
+    return strtoupper($value);
+}
+
 function normalizePower($value): string
 {
     if ((!is_string($value) && !is_int($value)) ||
@@ -47,6 +55,22 @@ function parseResult(string $action, string $stdout, string $stderr, int $exitCo
     $detected = array_values(array_unique(array_filter($lines, function ($line) {
         return preg_match('/\ADETECTED=[0-9A-Fa-f]+\z/', $line);
     })));
+
+    if ($action === 'clear-verified') {
+        $original = array_values(array_filter($lines, function ($line) { return preg_match('/\AORIGINAL=[0-9A-F]{4,124}\z/', $line); }));
+        $attempted = in_array('ATTEMPTED=1', $lines, true);
+        $zeros = '000000000000000000000000';
+        $confirmed = !$errors && $exitCode === 0 && count($original) === 1 &&
+            $original[0] === 'ORIGINAL=' . $expectedEpc && $attempted &&
+            in_array('WRITTEN=' . $zeros, $lines, true) &&
+            in_array('VERIFIED=' . $zeros, $lines, true) && in_array('OK', $lines, true);
+        $clean = $confirmed ? [$original[0], 'VERIFIED=' . $zeros, 'OK'] :
+            ($errors ?: (in_array('NO_TAG', $lines, true) ? ['NO_TAG'] : ['ERROR=VERIFY_NOT_CONFIRMED']));
+        return ['ok' => $confirmed, 'accion' => $action, 'resultado' => implode("\n", $clean),
+            'exit_code' => $confirmed ? 0 : 1, 'stderr' => trim($stderr),
+            'original_epc' => count($original) === 1 ? substr($original[0], 9) : null,
+            'write_attempted' => $attempted, 'verified' => $confirmed];
+    }
 
     if ($errors || $exitCode !== 0) {
         // El cliente antiguo busca WRITTEN/DETECTED sin consultar ok: nunca mezclar exito y error.
@@ -216,7 +240,7 @@ function handleRequest(array $request, string $baseDir, bool $windows, callable 
     $action = $request['action'] ?? null;
     if ($action === null || $action === '') return failure(null, 'ACTION_REQUIRED', "Parametro 'action' requerido");
     if (!is_string($action)) return failure(null, 'ACTION_INVALID', 'Parametro action invalido');
-    if (!in_array($action, ['status', 'version', 'inventory', 'read-epc', 'write-epc', 'clear', 'get-power', 'set-power'], true)) {
+    if (!in_array($action, ['status', 'version', 'inventory', 'read-epc', 'write-epc', 'clear', 'clear-verified', 'get-power', 'set-power'], true)) {
         return failure($action, 'UNKNOWN_ACTION', 'Accion no permitida: ' . $action);
     }
     $params = [];
@@ -230,6 +254,10 @@ function handleRequest(array $request, string $baseDir, bool $windows, callable 
             $words = normalizeWords($request['palabras'] ?? 6);
             $params[] = $words;
             $expected = str_repeat('0', (int) $words * 4);
+        } elseif ($action === 'clear-verified') {
+            if (!isset($request['expected_epc'])) return failure($action, 'EXPECTED_EPC_REQUIRED', "Falta parametro 'expected_epc'");
+            $expected = normalizeExpectedEpc($request['expected_epc']);
+            $params[] = $expected;
         } elseif ($action === 'set-power') {
             if (!isset($request['power'])) return failure($action, 'POWER_REQUIRED', "Falta parametro 'power'");
             $expected = normalizePower($request['power']);
@@ -242,11 +270,13 @@ function handleRequest(array $request, string $baseDir, bool $windows, callable 
     if (!is_file($bridge)) return failure($action, 'BRIDGE_NOT_FOUND', 'Bridge no encontrado: ' . $bridge);
     $arguments = array_merge($windows ? [$bridge, $action] : ['python3', $bridge, $action], $params);
     try {
+        if ($action === 'clear-verified' && function_exists('set_time_limit')) @set_time_limit(75);
         // El bloqueo cubre la respuesta del pad y el guardado: la siguiente lectura ve el nuevo valor.
         $execution = withReaderLock($baseDir, function () use ($arguments, $windows, $baseDir, $action, $expected, $runner) {
-            $operation = function () use ($runner, $arguments, $windows, $baseDir) {
+            $operation = function () use ($runner, $arguments, $windows, $baseDir, $action) {
                 // Inyeccion solo desde PHP para pruebas; no se controla por parametros HTTP.
-                return $runner !== null ? $runner($arguments) : runProcess(commandLine($arguments, $windows), $baseDir);
+                return $runner !== null ? $runner($arguments) : runProcess(commandLine($arguments, $windows), $baseDir,
+                    $action === 'clear-verified' ? 60.0 : 30.0);
             };
             return $action === 'set-power' ? runPowerChange($baseDir, $expected, $operation) : $operation();
         });

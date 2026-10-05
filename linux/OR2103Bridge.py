@@ -278,7 +278,7 @@ def init_reader(ser, buzzer_off=True, power=None):
     # ese comando dejo al pad sin responder en la prueba fisica de Linux.
 
 
-def inventory(only_first=False):
+def scan_epcs(only_first=False):
     power = configured_power()
     ser = serial.Serial(PORT, BAUD, timeout=0.15)
 
@@ -312,17 +312,22 @@ def inventory(only_first=False):
             # No vaciar RX: puede haber etiquetas y ACK juntos o fragmentados.
             request_response(ser, 0x54, reader=reader, on_tag=collect_tag)
 
-        # Marijoa solo recibe exito despues de confirmar que el inventario paro.
-        if detected:
-            if only_first:
-                beep(ser)
-            for epc in (detected[:1] if only_first else detected):
-                print("DETECTED=" + epc)
-        else:
-            print("NO_TAG")
-        return 0
+        # No entregar una lectura hasta confirmar la parada del inventario.
+        if detected and only_first:
+            beep(ser)
+        return detected[:1] if only_first else detected
     finally:
         ser.close()
+
+
+def inventory(only_first=False):
+    detected = scan_epcs(only_first)
+    if detected:
+        for epc in detected:
+            print("DETECTED=" + epc)
+    else:
+        print("NO_TAG")
+    return 0
 
 
 def read_epc():
@@ -384,6 +389,50 @@ def clear_epc(words=6):
     return write_epc("0" * (words * 4))
 
 
+def clear_verified(expected_epc):
+    """Una etiqueta aislada: inventario completo, un intento, inventario nuevo."""
+    expected_epc = normalize_epc(expected_epc)
+    zeros = "0" * 24
+    present = scan_epcs()
+    if not present:
+        print("NO_TAG")
+        return 1
+    if len(present) != 1:
+        print("ERROR=MULTIPLE_TAGS")
+        return 1
+    if present[0] != expected_epc:
+        print("ERROR=TAG_CHANGED")
+        return 1
+    if expected_epc == zeros:
+        print("ERROR=ALREADY_CLEAR")
+        return 1
+    print("ORIGINAL=" + expected_epc, flush=True)
+
+    cmd = build_write_epc(zeros)
+    ser = serial.Serial(PORT, BAUD, timeout=0.25)
+    try:
+        init_reader(ser, buzzer_off=True, power=configured_power())
+        ser.reset_input_buffer()
+        print("ATTEMPTED=1", flush=True)
+        ser.write(cmd)
+        time.sleep(0.25)
+        response = ser.read(256)
+    finally:
+        ser.close()
+    if not is_write_ok(response):
+        print("ERROR=WRITE_FAILED")
+        return 1
+    print("WRITTEN=" + zeros, flush=True)
+    verified = scan_epcs()
+    if len(verified) == 1 and verified[0] == zeros:
+        print("VERIFIED=" + zeros)
+        print("OK")
+        return 0
+    print("ERROR=" + ("VERIFY_NO_TAG" if not verified else
+                      "VERIFY_MULTIPLE_TAGS" if len(verified) > 1 else "VERIFY_MISMATCH"))
+    return 1
+
+
 def main(args=None):
     args = sys.argv[1:] if args is None else args
     if not args:
@@ -393,7 +442,7 @@ def main(args=None):
     if action == "version":
         print("ERROR=VERSION_NOT_SUPPORTED")
         return 1
-    if action not in ("status", "get-power", "set-power", "read-epc", "inventory", "write-epc", "clear"):
+    if action not in ("status", "get-power", "set-power", "read-epc", "inventory", "write-epc", "clear", "clear-verified"):
         print("ERROR=UNKNOWN_ACTION")
         return 1
     if action == "write-epc" and len(args) < 2:
@@ -405,6 +454,10 @@ def main(args=None):
                 raise ValueError("POWER_REQUIRED")
             power = normalize_power(args[1])
         if action == "write-epc":
+            normalize_epc(args[1])
+        if action == "clear-verified":
+            if len(args) < 2:
+                raise ValueError("EXPECTED_EPC_REQUIRED")
             normalize_epc(args[1])
         words = 6
         if action == "clear" and len(args) >= 2:
@@ -424,6 +477,8 @@ def main(args=None):
             return inventory()
         if action == "write-epc":
             return write_epc(args[1])
+        if action == "clear-verified":
+            return clear_verified(args[1])
         return clear_epc(words)
     except ValueError as error:
         print("ERROR=" + str(error).replace("\r", " ").replace("\n", " "))

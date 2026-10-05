@@ -58,6 +58,8 @@ namespace OR2127LIB {
         private int stopRequests;
         private int stopReplies;
         private bool wasSet;
+        private bool written;
+        private int inventoryCalls;
         private int requested;
         private static string Value(string name, string fallback) { return Environment.GetEnvironmentVariable(name) ?? fallback; }
         private static void Log(string message) { Console.Error.WriteLine("CALL=" + message); }
@@ -116,10 +118,18 @@ namespace OR2127LIB {
             Log("Inventory"); msg="";
             if (Value("FAKE_INVENTORY", "1") == "throw") throw new InvalidOperationException("FAKE_INVENTORY_THROW");
             if (Value("FAKE_INVENTORY", "1") != "1") return false;
-            if (inventoryTag != null && Value("FAKE_NO_TAG", "0") != "1") inventoryTag(new TagInfo { EPC=Value("FAKE_TAG", "000000000000000001000028") });
+            inventoryCalls++;
+            string tags = Value(inventoryCalls == 1 ? "FAKE_TAGS_BEFORE" : "FAKE_TAGS_AFTER",
+                written ? "000000000000000000000000" : Value("FAKE_TAG", "000000000000000001000028"));
+            if (inventoryTag != null && Value("FAKE_NO_TAG", "0") != "1" && tags != "NONE")
+                foreach(string epc in tags.Split(';')) if(epc.Length != 0) inventoryTag(new TagInfo { EPC=epc });
             return true;
         }
-        public bool WriteTag(string pwd,int bank,int start,int words,string data,out string msg) { Log("WriteTag:"+data); msg=""; return true; }
+        public bool WriteTag(string pwd,int bank,int start,int words,string data,out string msg) {
+            Log("WriteTag:"+data); msg="fake";
+            written = Value("FAKE_WRITE", "1") == "1";
+            return written;
+        }
     }
 }
 '''
@@ -377,6 +387,36 @@ public class BeepAckHarness {
         r = self.run_bridge('clear', '6')
         self.assertEqual(r.returncode, 0)
         self.assertEqual(r.stdout.splitlines(), ['WRITTEN=000000000000000000000000', 'OK'])
+
+    def test_clear_verified_single_write_and_readback(self):
+        epc = '000000000000000001000028'
+        r = self.run_bridge('clear-verified', epc)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(r.stdout.splitlines(), ['ORIGINAL=' + epc, 'ATTEMPTED=1',
+            'WRITTEN=' + '0' * 24, 'VERIFIED=' + '0' * 24, 'OK'])
+        self.assertEqual(r.stderr.count('CALL=WriteTag:'), 1)
+        self.assertEqual(r.stderr.count('CALL=Inventory\n'), 2)
+
+    def test_clear_verified_blocks_ambiguous_or_absent_tag(self):
+        epc = '000000000000000001000028'
+        for tags, failure in [('NONE', 'NO_TAG'), (epc + ';' + '0' * 24, 'ERROR=MULTIPLE_TAGS'),
+                              ('000000000000000001000027', 'ERROR=TAG_CHANGED')]:
+            with self.subTest(tags=tags):
+                r = self.run_bridge('clear-verified', epc, FAKE_TAGS_BEFORE=tags)
+                self.assertNotEqual(r.returncode, 0)
+                self.assertEqual(r.stdout.strip(), failure)
+                self.assertNotIn('CALL=WriteTag:', r.stderr)
+
+    def test_clear_verified_failed_write_or_verification_is_not_retried(self):
+        epc = '000000000000000001000028'
+        for env, failure in [({'FAKE_WRITE': '0'}, 'ERROR=WRITE_FAILED:fake'),
+                             ({'FAKE_TAGS_AFTER': epc}, 'ERROR=VERIFY_MISMATCH'),
+                             ({'FAKE_TAGS_AFTER': 'NONE'}, 'ERROR=VERIFY_NO_TAG')]:
+            with self.subTest(env=env):
+                r = self.run_bridge('clear-verified', epc, **env)
+                self.assertNotEqual(r.returncode, 0)
+                self.assertEqual(r.stdout.splitlines()[-1], failure)
+                self.assertEqual(r.stderr.count('CALL=WriteTag:'), 1)
 
 
     def assert_closed_without_subscriptions(self, result, requests, replies):

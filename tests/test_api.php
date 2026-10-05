@@ -153,4 +153,30 @@ $nested = RfidBridge\withReaderLock($root . '-test-' . getmypid(), function () u
 check($nested[0] === 'ERROR=BRIDGE_BUSY', 'Dos operaciones no abren el lector a la vez');
 @unlink(sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'rfid-bridge-' . hash('sha256', $root . '-test-' . getmypid()) . '.lock');
 
+$zero = str_repeat('0', 24);
+foreach ([false, true] as $platform) {
+    $calls = 0;
+    $result = RfidBridge\handleRequest(['action' => 'clear-verified', 'expected_epc' => $epc], $root, $platform,
+        function ($arguments) use (&$calls, $epc, $zero) {
+            $calls++;
+            check(end($arguments) === $epc, 'Conservar EPC original exacto');
+            return ["ORIGINAL=$epc\nATTEMPTED=1\nWRITTEN=$zero\nVERIFIED=$zero\nOK", '', 0];
+        });
+    check($calls === 1 && $result['ok'] && $result['verified'] && $result['write_attempted'] &&
+        $result['original_epc'] === $epc, 'Contrato de vaciado verificado en ambos controladores');
+}
+foreach ([['NO_TAG', 1, false], ['ERROR=MULTIPLE_TAGS', 1, false],
+          ["ORIGINAL=$epc\nATTEMPTED=1\nERROR=WRITE_FAILED", 1, true],
+          ["ORIGINAL=$epc\nATTEMPTED=1\nWRITTEN=$zero\nERROR=VERIFY_MISMATCH", 1, true],
+          ["ORIGINAL=$epc\nATTEMPTED=1\nWRITTEN=$zero\nOK", 0, true]] as $case) {
+    $result = RfidBridge\parseResult('clear-verified', $case[0], '', $case[1], $epc);
+    check(!$result['ok'] && !$result['verified'] && $result['write_attempted'] === $case[2],
+        'No contar sin lectura exacta; preservar si hubo intento');
+}
+$called = false;
+$invalid = RfidBridge\handleRequest(['action' => 'clear-verified', 'expected_epc' => '1000027'], $root, false,
+    function () use (&$called) { $called = true; return ['', '', 0]; });
+check(!$invalid['ok'] && !$called && $invalid['resultado'] === 'ERROR=EXPECTED_EPC_INVALID',
+    'EPC esperado invalido nunca abre el lector');
+
 echo in_array('--fixtures', $argv, true) ? json_encode($fixtures) : "OK: contrato HTTP, validacion, procesos y concurrencia\n";

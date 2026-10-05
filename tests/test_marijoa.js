@@ -10,6 +10,16 @@ if (!process.argv[2]) throw new Error('Indica la ruta a compras/Fraccionar.js');
 const source = fs.readFileSync(process.argv[2], 'utf8');
 const fixtures = JSON.parse(execFileSync('php', [path.join(__dirname, 'test_api.php'), '--fixtures'], {encoding: 'utf8'}));
 
+// La versión actual de Fraccionar verifica el tag y el registro antes de grabar.
+// Ejecutar su prueba mantenida junto al consumidor evita simular un flujo antiguo.
+if (source.includes('bloquearEtiquetaRFIDDuplicada')) {
+    const consumerTest = path.resolve(path.dirname(process.argv[2]), '..', 'tests', 'fraccionar_rfid_grabacion_test.js');
+    assert(fs.existsSync(consumerTest), 'Falta la prueba RFID del consumidor actual');
+    execFileSync(process.execPath, [consumerTest], {stdio: 'inherit'});
+    console.log('OK: contrato PHP del bridge y funciones actuales de Fraccionar, sin hardware');
+    process.exit(0);
+}
+
 function extract(name, required = true) {
     const pattern = new RegExp('^(?:async )?function ' + name + '\\s*\\(', 'm');
     const start = source.search(pattern);

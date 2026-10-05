@@ -375,6 +375,45 @@ class BridgeTests(unittest.TestCase):
         self.assertNotIn(bytes.fromhex("A5005353"), device.writes)
         self.assertTrue(device.closed)
 
+    def test_clear_verified_succeeds_with_one_write_and_independent_read(self):
+        calls = itertools.count()
+        device = FakeSerial(replies={0x53: lambda: [ACK_START + inventory_frame(EPC if next(calls) == 0 else "0" * 24)]})
+        code, output, _ = self.invoke(["clear-verified", EPC], device)
+        self.assertEqual((code, output.splitlines()), (0, ["ORIGINAL=" + EPC, "ATTEMPTED=1",
+            "WRITTEN=" + "0" * 24, "VERIFIED=" + "0" * 24, "OK"]))
+        self.assertEqual(sum(command[2] == 0x57 for command in device.writes), 1)
+        self.assertEqual(sum(command[2] == 0x53 for command in device.writes), 2)
+
+    def test_clear_verified_blocks_no_tag_multiple_and_changed_without_write(self):
+        cases = [([], "NO_TAG"), ([EPC, "0" * 24], "ERROR=MULTIPLE_TAGS"),
+                 (["000000000000000001000028"], "ERROR=TAG_CHANGED"),
+                 (["0" * 24], "ERROR=TAG_CHANGED")]
+        for epcs, expected in cases:
+            with self.subTest(epcs=epcs):
+                device = FakeSerial(replies={0x53: [ACK_START + b"".join(inventory_frame(epc) for epc in epcs)]})
+                code, output, _ = self.invoke(["clear-verified", EPC], device)
+                self.assertEqual((code, output.strip()), (1, expected))
+                self.assertFalse(any(command[2] == 0x57 for command in device.writes))
+
+    def test_clear_verified_write_error_is_not_retried(self):
+        device = FakeSerial(replies={0x53: [ACK_START + inventory_frame(EPC)],
+                                     0x57: [bridge.command(0x57, b"\x03")]})
+        code, output, _ = self.invoke(["clear-verified", EPC], device)
+        self.assertEqual((code, output.splitlines()), (1, ["ORIGINAL=" + EPC, "ATTEMPTED=1", "ERROR=WRITE_FAILED"]))
+        self.assertEqual(sum(command[2] == 0x57 for command in device.writes), 1)
+
+    def test_clear_verified_requires_exact_readback(self):
+        for after, failure in [([], "VERIFY_NO_TAG"), ([EPC], "VERIFY_MISMATCH"),
+                               (["0" * 24, EPC], "VERIFY_MULTIPLE_TAGS")]:
+            with self.subTest(after=after):
+                calls = itertools.count()
+                device = FakeSerial(replies={0x53: lambda: [ACK_START + b"".join(
+                    inventory_frame(epc) for epc in ([EPC] if next(calls) == 0 else after))]})
+                code, output, _ = self.invoke(["clear-verified", EPC], device)
+                self.assertEqual(code, 1)
+                self.assertEqual(output.splitlines()[-1], "ERROR=" + failure)
+                self.assertEqual(sum(command[2] == 0x57 for command in device.writes), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

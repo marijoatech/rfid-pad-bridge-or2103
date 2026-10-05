@@ -59,13 +59,13 @@ public class OR2103Bridge
         }
         if (action != "status" && action != "get-power" && action != "set-power" &&
             action != "version" && action != "inventory" && action != "read-epc" &&
-            action != "write-epc" && action != "clear")
+            action != "write-epc" && action != "clear" && action != "clear-verified")
         {
             Out("ERROR=UNKNOWN_ACTION");
             return 1;
         }
 
-        if (action == "inventory" || action == "read-epc" || action == "write-epc" || action == "clear")
+        if (action == "inventory" || action == "read-epc" || action == "write-epc" || action == "clear" || action == "clear-verified")
         {
             try { LoadRuntimePower(); }
             catch (Exception ex)
@@ -93,6 +93,15 @@ public class OR2103Bridge
             PrepareReader();
             if (action == "inventory") return Inventory(false);
             if (action == "read-epc") return Inventory(true);
+            if (action == "clear-verified")
+            {
+                if (args.Length < 2 || !Regex.IsMatch(args[1], @"\A[0-9A-Fa-f]{4,124}\z") || args[1].Length % 4 != 0)
+                {
+                    Out("ERROR=EXPECTED_EPC_INVALID");
+                    return 1;
+                }
+                return ClearVerified(args[1].ToUpperInvariant());
+            }
 
             if (action == "write-epc")
             {
@@ -125,7 +134,7 @@ public class OR2103Bridge
             // No configurar LED/buzzer (0x13): el OR2103 probado deja de aceptar comandos.
             // Cerrar el puerto sin enviar configuraciones adicionales al lector.
             TryClose(readerManager);
-            if (action == "inventory" || action == "read-epc" || action == "write-epc" || action == "clear")
+            if (action == "inventory" || action == "read-epc" || action == "write-epc" || action == "clear" || action == "clear-verified")
                 Thread.Sleep(800);
 		}
     }
@@ -352,7 +361,7 @@ public class OR2103Bridge
         return 1;
     }
 
-    private static int Inventory(bool onlyFirst)
+    private static List<string> ScanTags(bool onlyFirst)
     {
         lock (TagsLock) { Tags.Clear(); }
         readerManager.InventoryTag += ReaderManager_InventoryTag;
@@ -380,13 +389,15 @@ public class OR2103Bridge
             finally { readerManager.InventoryTag -= ReaderManager_InventoryTag; }
         }
 
-        if (!started)
-        {
-            Out("ERROR=INVENTORY_FAILED:" + Clean(msg));
-            return 1;
-        }
+        if (!started) throw new InvalidOperationException("INVENTORY_FAILED:" + Clean(msg));
         List<string> copy;
         lock (TagsLock) { copy = new List<string>(Tags); }
+        return copy;
+    }
+
+    private static int Inventory(bool onlyFirst)
+    {
+        List<string> copy = ScanTags(onlyFirst);
         if (copy.Count == 0)
         {
             Out("NO_TAG");
@@ -403,6 +414,32 @@ public class OR2103Bridge
             foreach (string epc in copy) Out("DETECTED=" + epc);
         }
         return 0;
+    }
+
+    private static int ClearVerified(string expected)
+    {
+        const string zeros = "000000000000000000000000";
+        List<string> before = ScanTags(false);
+        if (before.Count == 0) { Out("NO_TAG"); return 1; }
+        if (before.Count != 1) { Out("ERROR=MULTIPLE_TAGS"); return 1; }
+        if (before[0] != expected) { Out("ERROR=TAG_CHANGED"); return 1; }
+        if (expected == zeros) { Out("ERROR=ALREADY_CLEAR"); return 1; }
+        Out("ORIGINAL=" + expected);
+        string msg;
+        string data = "3000" + zeros; // PC de seis palabras, seguido del EPC.
+        Out("ATTEMPTED=1");
+        bool written = readerManager.WriteTag(AccessPwd, 1, 1, 7, data, out msg);
+        if (!written) { Out("ERROR=WRITE_FAILED:" + Clean(msg)); return 1; }
+        Out("WRITTEN=" + zeros);
+        List<string> after = ScanTags(false);
+        if (after.Count == 1 && after[0] == zeros)
+        {
+            Out("VERIFIED=" + zeros);
+            Out("OK");
+            return 0;
+        }
+        Out("ERROR=" + (after.Count == 0 ? "VERIFY_NO_TAG" : after.Count > 1 ? "VERIFY_MULTIPLE_TAGS" : "VERIFY_MISMATCH"));
+        return 1;
     }
 
     private static bool TryBeepConfirmed()

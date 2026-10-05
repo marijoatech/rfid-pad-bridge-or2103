@@ -221,9 +221,55 @@ con el pad y las etiquetas utilizados.
 | `version` | Consulta la versión del lector | Devuelve `ERROR=VERSION_NOT_SUPPORTED`, con `ok=false` |
 | `write-epc&epc=...` | Implementada | Implementada; conserva los comandos de escritura existentes |
 | `clear&palabras=6` | Escribe un EPC de ceros | Escribe un EPC de ceros; respeta `palabras` |
+| `clear-verified&expected_epc=...` | Un intento de escritura de 24 ceros con inventario antes y después | Igual; no reintenta la escritura |
 
 `clear` utiliza 6 palabras por defecto (24 dígitos hexadecimales). PHP valida y
 transmite `palabras`, entre 1 y 31; la capacidad física depende de la etiqueta.
+
+### Vaciado guiado de una etiqueta
+
+Marijoa usa `clear-verified` solo cuando el operador ha aislado físicamente una
+etiqueta. Se envía por POST el EPC exacto leído previamente:
+
+```text
+action=clear-verified&expected_epc=E28436110000100004210970
+```
+
+`expected_epc` debe ser hexadecimal de 4 a 124 caracteres, en múltiplos de 4.
+El bridge, bajo el mismo bloqueo de lector que las acciones existentes, hace un
+inventario completo. Exige un solo EPC distinto, igual a `expected_epc`, y evita
+volver a escribir si ya son los 24 ceros. Luego solicita una única escritura de
+`000000000000000000000000` y realiza un inventario independiente. Solo devuelve
+éxito si éste contiene exactamente ese EPC y ninguno más. Ejemplo de éxito:
+
+```json
+{"ok":true,"accion":"clear-verified","resultado":"ORIGINAL=E28436110000100004210970\nVERIFIED=000000000000000000000000\nOK","exit_code":0,"stderr":"","original_epc":"E28436110000100004210970","write_attempted":true,"verified":true}
+```
+
+En errores se mantiene HTTP 200 y `ok=false`, `verified=false`, `exit_code=1`;
+`resultado` es `NO_TAG` o `ERROR=...`. `write_attempted` indica si se llegó a
+solicitar la escritura; si falla la red después de enviarla, el cliente debe
+tratar el resultado como incierto y leer la etiqueta antes de cualquier nuevo
+intento. `original_epc` solo se informa si el inventario previo lo confirmó.
+Los códigos nuevos incluyen `MULTIPLE_TAGS`, `TAG_CHANGED`, `ALREADY_CLEAR`,
+`WRITE_FAILED`, `VERIFY_NO_TAG`, `VERIFY_MULTIPLE_TAGS` y `VERIFY_MISMATCH`.
+
+El SDK Windows expone `SetTagFilter`, pero no se ha validado en este pad una
+selección fiable de un EPC para `WriteTag`; el comando serial Linux usado aquí
+tampoco transmite un selector. El inventario agrupa por EPC: dos etiquetas con
+el mismo EPC pueden parecer una. Por ello esta acción **exige aislamiento físico
+de una sola etiqueta** y no ofrece escritura simultánea ni garantía de detectar
+dos etiquetas idénticas. Tampoco puede impedir que un operador cambie la
+etiqueta entre inventario y escritura. El SDK puede hacer trabajo interno opaco;
+el bridge solo garantiza que no inicia un segundo intento propio en esta acción.
+La pantalla exige retirar la etiqueta y observar `NO_TAG` antes de aceptar otra.
+`read-epc`, `inventory`, `write-epc` y `clear` conservan sus contratos previos.
+
+Las pruebas automáticas usan SDK y serial simulados; no escriben etiquetas
+físicas. Para una validación física posterior, use una etiqueta de prueba
+aislada, confirme por inventario su EPC original, invoque `clear-verified` una
+vez, compruebe los 24 ceros con `inventory`, retire la etiqueta y confirme
+`NO_TAG`. Esa prueba requiere autorización previa para escribir en un tag real.
 
 Límites y pendientes:
 
