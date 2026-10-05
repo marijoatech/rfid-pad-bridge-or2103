@@ -180,6 +180,22 @@ o sound=1 para solicitarlo explícitamente. También se acepta sound en el cuerp
 de una petición POST. Solo admite 0 o 1; cualquier otro valor devuelve
 ERROR=SOUND_INVALID. Las llamadas antiguas que omiten sound conservan el pitido.
 
+Ejemplo POST sin sonido:
+
+```bash
+curl -X POST 'http://localhost/rfid-bridge/PADBridge.php' \
+  --data 'action=read-epc&sound=0'
+```
+
+`sound=0` también desactiva temporalmente el pitido automático del PAD: consulta
+su estado, conserva la luz, verifica el silencio antes de iniciar el inventario
+y restaura el ajuste original después de detenerlo. No basta con omitir el aviso
+puntual del programa. Si el lector no confirma el ajuste, la lectura falla;
+`ERROR=SOUND_RESTORE_FAILED` indica que no se pudo confirmar la restauración.
+No desconectes el USB durante la petición: la restauración requiere que el lector
+siga conectado. Este parámetro solo se aplica a `read-epc`; otras peticiones del
+programa, como grabar o vaciar, mantienen su comportamiento de sonido.
+
 PHP coordina las peticiones de esta instalación mediante un bloqueo: espera
 hasta 5 segundos si otra operación está usando el bridge y devuelve
 `ERROR=BRIDGE_BUSY` si continúa ocupado. El proceso tiene un límite de 30
@@ -343,9 +359,13 @@ haberse aplicado sin confirmación. Si ocurrió al grabar o vaciar un EPC, lee l
 etiqueta antes de repetir la operación. La API conserva el error y su JSON; la
 guía no repite comandos automáticamente.
 
-En la prueba física del OR2103 realizada en Linux se reprodujo un bloqueo tras
-configurar automáticamente el zumbador con el comando `0x13`. Se retiró ese
-comando de la inicialización y de las operaciones automáticas en ambos sistemas.
+En una prueba física anterior del OR2103 en Linux se reprodujo un bloqueo tras
+configurar automáticamente el zumbador con el comando `0x13`. Por eso no se envía
+ese comando en la inicialización general. Solo `read-epc&sound=0` lo utiliza,
+con inventario detenido y confirmado, preservación de la luz, lectura de
+verificación y restauración del estado original. Este ciclo de configuración
+se comprobó con el PAD en Windows; la validación física del silencio en Linux
+queda pendiente.
 Se conserva el pitido puntual `0x19`. En Windows, la parada de inventario debe
 recibir su confirmación antes de cerrar el puerto, y el pitido utiliza un envío
 que espera la respuesta del lector. Estos cambios permiten seguir leyendo,

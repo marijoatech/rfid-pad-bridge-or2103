@@ -7,6 +7,7 @@ import time
 import sys
 import json
 from pathlib import Path
+from contextlib import contextmanager
 
 PORT = "/dev/ttyUSB0"
 BAUD = 115200
@@ -274,8 +275,44 @@ def init_reader(ser, buzzer_off=True, power=None):
     send_hex(ser, "A5 00 32 32")          # get mode
     set_power(ser, power)                 # ACK + lectura verifican el ajuste persistido
     # Inventario usa 0x53; no modificar el area HID/RESERVE mediante 0x43.
-    # Se conserva buzzer_off como argumento compatible. No enviar 0x13:
-    # ese comando dejo al pad sin responder en la prueba fisica de Linux.
+    # buzzer_off se conserva por compatibilidad; el silencio se aplica solo
+    # cuando se solicita, con STOP, lectura del estado y restauracion.
+
+
+def read_sound_mode(ser):
+    mode = request_response(ser, 0x14, data_length=2)[1]
+    if mode > 3:
+        raise ValueError("SOUND_STATE_INVALID")
+    return mode
+
+
+def set_sound_mode(ser, mode):
+    request_response(ser, 0x13, bytes([mode]))
+    if read_sound_mode(ser) != mode:
+        raise ValueError("SOUND_VERIFY_FAILED")
+
+
+@contextmanager
+def muted_reader(ser, enabled):
+    if not enabled:
+        yield
+        return
+    # Nunca configurar el buzzer durante un inventario activo.
+    request_response(ser, 0x54)
+    original = read_sound_mode(ser)
+    if not original & 2:
+        yield
+        return
+    try:
+        set_sound_mode(ser, original & 1)  # Conservar el bit de la luz.
+        yield
+    finally:
+        # Un ACK perdido no implica que el cambio no se haya aplicado.
+        try:
+            request_response(ser, 0x54)
+            set_sound_mode(ser, original)
+        except Exception as exc:
+            raise ValueError("SOUND_RESTORE_FAILED") from exc
 
 
 def scan_epcs(only_first=False, sound=True):
@@ -283,39 +320,40 @@ def scan_epcs(only_first=False, sound=True):
     ser = serial.Serial(PORT, BAUD, timeout=0.15)
 
     try:
-        init_reader(ser, buzzer_off=True, power=power)
-        ser.reset_input_buffer()
-        reader = FrameReader(ser)
-        detected = []
+        with muted_reader(ser, only_first and not sound):
+            init_reader(ser, buzzer_off=True, power=power)
+            ser.reset_input_buffer()
+            reader = FrameReader(ser)
+            detected = []
 
-        def collect_tag(frame):
-            epc = epc_from_frame(frame)
-            if epc not in detected:
-                detected.append(epc)
+            def collect_tag(frame):
+                epc = epc_from_frame(frame)
+                if epc not in detected:
+                    detected.append(epc)
 
-        try:
-            # El bloque finally tambien intenta STOP si START no fue confirmado.
-            request_response(ser, 0x53, reader=reader, on_tag=collect_tag)
-            deadline = time.monotonic() + TIMEOUT_MS / 1000.0
-            received_before, tags_before = reader.received, reader.tag_frames
             try:
-                while not (only_first and detected):
-                    frame = reader.read_frame(deadline)
-                    if frame is None:
-                        break
-                    if frame[2] == 0x55:
-                        collect_tag(frame)
-            except Exception:
-                diagnostic(0x55, reader, received_before, tags_before)
-                raise
-        finally:
-            # No vaciar RX: puede haber etiquetas y ACK juntos o fragmentados.
-            request_response(ser, 0x54, reader=reader, on_tag=collect_tag)
+                # El bloque finally tambien intenta STOP si START no fue confirmado.
+                request_response(ser, 0x53, reader=reader, on_tag=collect_tag)
+                deadline = time.monotonic() + TIMEOUT_MS / 1000.0
+                received_before, tags_before = reader.received, reader.tag_frames
+                try:
+                    while not (only_first and detected):
+                        frame = reader.read_frame(deadline)
+                        if frame is None:
+                            break
+                        if frame[2] == 0x55:
+                            collect_tag(frame)
+                except Exception:
+                    diagnostic(0x55, reader, received_before, tags_before)
+                    raise
+            finally:
+                # No vaciar RX: puede haber etiquetas y ACK juntos o fragmentados.
+                request_response(ser, 0x54, reader=reader, on_tag=collect_tag)
 
-        # No entregar una lectura hasta confirmar la parada del inventario.
-        if detected and only_first and sound:
-            beep(ser)
-        return detected[:1] if only_first else detected
+            # No entregar una lectura hasta confirmar la parada del inventario.
+            if detected and only_first and sound:
+                beep(ser)
+            return detected[:1] if only_first else detected
     finally:
         ser.close()
 
