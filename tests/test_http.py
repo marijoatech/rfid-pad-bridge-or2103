@@ -82,6 +82,9 @@ class HttpTests(unittest.TestCase):
         self.assertIn('data-result="get-power-result"', html)
         self.assertIn('data-result="set-power-result"', html)
         self.assertIn('name="palabras" value="6"', html)
+        self.assertIn('name="sound"', html)
+        self.assertIn('option value="1" selected', html)
+        self.assertIn('option value="0"', html)
         self.assertNotIn('href="PADBridge.php?action=write-epc', html)
         self.assertNotIn('href="PADBridge.php?action=clear', html)
         with urllib.request.urlopen(self.url.replace("PADBridge.php", "assets/help.css"), timeout=3) as response:
@@ -105,6 +108,8 @@ class HttpTests(unittest.TestCase):
             ("GET", "action[]=read-epc&help=1", "text/html", "ACTION_INVALID"),
             ("GET", "action=invalid&help=1", "text/html", "UNKNOWN_ACTION"),
             ("GET", "action=write-epc&epc=XYZ", "text/html", "EPC_INVALID_HEX"),
+            ("GET", "action=read-epc&sound=2", "application/json", "SOUND_INVALID"),
+            ("POST", "action=read-epc&sound=false", "application/json", "SOUND_INVALID"),
             ("GET", "help[]=1", "application/json", "ACTION_REQUIRED"),
         ]
         for method, query, accept, code in cases:

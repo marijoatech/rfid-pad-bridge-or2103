@@ -22,6 +22,21 @@ foreach ([false, true] as $windows) {
     $fixtures['write'] = $write;
 }
 
+foreach ([[['action' => 'read-epc'], '1'],
+          [['action' => 'read-epc', 'sound' => '0'], '0'],
+          [['action' => 'read-epc', 'sound' => '1'], '1']] as $case) {
+    $request = $case[0];
+    $expectedSound = $case[1];
+    foreach ([false, true] as $windows) {
+        $result = RfidBridge\handleRequest($request, $root, $windows,
+            function ($arguments) use ($expectedSound) {
+                check(end($arguments) === $expectedSound, 'read-epc pasa la opcion sound al bridge');
+                return ['DETECTED=' . str_repeat('A', 24), '', 0];
+            });
+        check($result['ok'], 'read-epc conserva respuesta con sound=' . $expectedSound);
+    }
+}
+
 foreach (['1000027', 1000027, $epc] as $input) {
     check(RfidBridge\normalizeEpc($input) === $epc, 'Normalizacion idempotente');
 }
@@ -35,7 +50,9 @@ foreach ([[], ['action' => ['read-epc']], ['action' => 'invalid'], ['action' => 
     ['action' => 'write-epc', 'epc' => '1000-ZZZZ'], ['action' => 'write-epc', 'epc' => 'ABC'],
     ['action' => 'write-epc', 'epc' => str_repeat('A', 128)],
     ['action' => 'clear', 'palabras' => []], ['action' => 'clear', 'palabras' => '32'],
-    ['action' => 'clear', 'palabras' => '0'], ['action' => 'set-power'],
+    ['action' => 'clear', 'palabras' => '0'], ['action' => 'read-epc', 'sound' => '2'],
+    ['action' => 'read-epc', 'sound' => 'false'], ['action' => 'read-epc', 'sound' => []],
+    ['action' => 'set-power'],
     ['action' => 'set-power', 'power' => []], ['action' => 'set-power', 'power' => true],
     ['action' => 'set-power', 'power' => '4'], ['action' => 'set-power', 'power' => '31'],
     ['action' => 'set-power', 'power' => '10.5'], ['action' => 'set-power', 'power' => '10;echo x']] as $request) {

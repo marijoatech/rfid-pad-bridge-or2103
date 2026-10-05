@@ -278,7 +278,7 @@ def init_reader(ser, buzzer_off=True, power=None):
     # ese comando dejo al pad sin responder en la prueba fisica de Linux.
 
 
-def scan_epcs(only_first=False):
+def scan_epcs(only_first=False, sound=True):
     power = configured_power()
     ser = serial.Serial(PORT, BAUD, timeout=0.15)
 
@@ -313,15 +313,15 @@ def scan_epcs(only_first=False):
             request_response(ser, 0x54, reader=reader, on_tag=collect_tag)
 
         # No entregar una lectura hasta confirmar la parada del inventario.
-        if detected and only_first:
+        if detected and only_first and sound:
             beep(ser)
         return detected[:1] if only_first else detected
     finally:
         ser.close()
 
 
-def inventory(only_first=False):
-    detected = scan_epcs(only_first)
+def inventory(only_first=False, sound=True):
+    detected = scan_epcs(only_first, sound)
     if detected:
         for epc in detected:
             print("DETECTED=" + epc)
@@ -330,8 +330,8 @@ def inventory(only_first=False):
     return 0
 
 
-def read_epc():
-    return inventory(only_first=True)
+def read_epc(sound=True):
+    return inventory(only_first=True, sound=sound)
 
 
 def is_write_ok(resp):
@@ -439,6 +439,13 @@ def main(args=None):
         print("ERROR=ACTION_REQUIRED")
         return 1
     action = args[0]
+    sound = True
+    if action == "read-epc":
+        if len(args) > 2 or (len(args) == 2 and args[1] not in ("0", "1")):
+            print("ERROR=SOUND_INVALID")
+            return 1
+        if len(args) == 2:
+            sound = args[1] == "1"
     if action == "version":
         print("ERROR=VERSION_NOT_SUPPORTED")
         return 1
@@ -472,7 +479,7 @@ def main(args=None):
         if action == "set-power":
             return configure_power(power)
         if action == "read-epc":
-            return read_epc()
+            return read_epc(sound=sound)
         if action == "inventory":
             return inventory()
         if action == "write-epc":

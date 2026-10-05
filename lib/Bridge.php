@@ -48,6 +48,14 @@ function normalizePower($value): string
     return (string) (int) $value;
 }
 
+function normalizeSound($value): string
+{
+    if ((!is_string($value) && !is_int($value)) || !in_array((string) $value, ['0', '1'], true)) {
+        throw new \InvalidArgumentException('SOUND_INVALID');
+    }
+    return (string) $value;
+}
+
 function parseResult(string $action, string $stdout, string $stderr, int $exitCode, string $expectedEpc = ''): array
 {
     $lines = array_values(array_filter(array_map('trim', preg_split('/\r\n|\n|\r/', $stdout)), 'strlen'));
@@ -262,6 +270,8 @@ function handleRequest(array $request, string $baseDir, bool $windows, callable 
             if (!isset($request['power'])) return failure($action, 'POWER_REQUIRED', "Falta parametro 'power'");
             $expected = normalizePower($request['power']);
             $params[] = $expected;
+        } elseif ($action === 'read-epc') {
+            $params[] = normalizeSound($request['sound'] ?? '1');
         }
     } catch (\InvalidArgumentException $error) {
         return failure($action, $error->getMessage());

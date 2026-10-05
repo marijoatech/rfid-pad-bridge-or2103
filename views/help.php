@@ -47,11 +47,16 @@ $windows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
             <article class="card">
                 <div class="card-top"><code>read-epc</code><span class="badge">Lectura</span></div>
                 <h3>Leer una etiqueta</h3>
-                <p>Obtiene el primer EPC detectado. Coloca una etiqueta sobre el pad.</p>
-                <div class="request"><span>GET</span><code>?action=read-epc</code></div>
+                <p>Obtiene el primer EPC detectado. Coloca una etiqueta sobre el pad. El pitido está activado por defecto.</p>
+                <div class="request"><span>GET</span><code>?action=read-epc&amp;sound=0</code></div>
                 <p class="returns">Devuelve <code>DETECTED=…</code> o <code>NO_TAG</code>.</p>
                 <form class="operation-form" action="PADBridge.php" method="post" data-rfid-operation data-result="read-epc-result">
                     <input type="hidden" name="action" value="read-epc">
+                    <label for="read-epc-sound">Aviso sonoro</label>
+                    <select id="read-epc-sound" name="sound">
+                        <option value="1" selected>Activado</option>
+                        <option value="0">Silenciado</option>
+                    </select>
                     <button class="operation-button" type="submit" aria-controls="read-epc-result" disabled>Leer EPC</button>
                 </form>
                 <div id="read-epc-result" class="operation-result" role="status" aria-live="polite" hidden>

@@ -368,6 +368,21 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual((code, output), (1, "ERROR=POWER_CONFIG_INVALID\n"))
         factory.assert_not_called()
 
+    def test_read_sound_defaults_on_and_can_be_selected_explicitly(self):
+        for args, expected_sound in [(["read-epc"], True), (["read-epc", "1"], True), (["read-epc", "0"], False)]:
+            with self.subTest(args=args):
+                device = FakeSerial(replies={0x53: [ACK_START + ZERO_FRAME]})
+                code, output, _ = self.invoke(args, device)
+                self.assertEqual((code, output), (0, "DETECTED=" + "0" * 24 + "\n"))
+                self.assertEqual(bytes.fromhex("A5 00 19 19") in device.writes, expected_sound)
+
+    def test_read_sound_rejects_invalid_values_before_opening_reader(self):
+        for args in (["read-epc", "2"], ["read-epc", "false"], ["read-epc", "0", "1"]):
+            with self.subTest(args=args):
+                code, output, factory = self.invoke(args)
+                self.assertEqual((code, output), (1, "ERROR=SOUND_INVALID\n"))
+                factory.assert_not_called()
+
     def test_saved_power_mismatch_prevents_inventory(self):
         self.power_config.write_text('{"power":15}', encoding="utf-8")
         device = FakeSerial(replies={0x22: [bytes.fromhex("A50222000A2E")]})

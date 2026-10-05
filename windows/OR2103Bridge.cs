@@ -36,6 +36,17 @@ public class OR2103Bridge
 
         string action = args[0].Trim().ToLowerInvariant();
 
+        bool readSound = true;
+        if (action == "read-epc")
+        {
+            if (args.Length > 2 || (args.Length == 2 && args[1] != "0" && args[1] != "1"))
+            {
+                Out("ERROR=SOUND_INVALID");
+                return 1;
+            }
+            if (args.Length == 2) readSound = args[1] == "1";
+        }
+
         if (action == "methods")
         {
             PrintMethods();
@@ -92,7 +103,7 @@ public class OR2103Bridge
 
             PrepareReader();
             if (action == "inventory") return Inventory(false);
-            if (action == "read-epc") return Inventory(true);
+            if (action == "read-epc") return Inventory(true, readSound);
             if (action == "clear-verified")
             {
                 if (args.Length < 2 || !Regex.IsMatch(args[1], @"\A[0-9A-Fa-f]{4,124}\z") || args[1].Length % 4 != 0)
@@ -395,7 +406,7 @@ public class OR2103Bridge
         return copy;
     }
 
-    private static int Inventory(bool onlyFirst)
+    private static int Inventory(bool onlyFirst, bool sound = true)
     {
         List<string> copy = ScanTags(onlyFirst);
         if (copy.Count == 0)
@@ -406,7 +417,7 @@ public class OR2103Bridge
         if (onlyFirst)
         {
             // Aviso puntual con respuesta consumida antes de cerrar COM.
-            TryBeepConfirmed();
+            if (sound) TryBeepConfirmed();
             Out("DETECTED=" + copy[0]);
         }
         else

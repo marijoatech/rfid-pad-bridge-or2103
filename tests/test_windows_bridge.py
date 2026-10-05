@@ -355,6 +355,22 @@ public class BeepAckHarness {
         self.assertLess(r.stderr.index('CALL=StopReply:2'), r.stderr.index('CALL=SafeBeep'))
         self.assertLess(r.stderr.index('CALL=SafeBeepReply'), r.stderr.index('CALL=DisCon:'))
 
+    def test_read_sound_defaults_on_and_can_be_selected_explicitly(self):
+        for args, expected_beeps in [(('read-epc',), 1), (('read-epc', '1'), 1), (('read-epc', '0'), 0)]:
+            with self.subTest(args=args):
+                r = self.run_bridge(*args)
+                self.assertEqual(r.returncode, 0, r.stdout)
+                self.assertEqual(r.stdout.strip(), 'DETECTED=000000000000000001000028')
+                self.assertEqual(r.stderr.splitlines().count('CALL=SafeBeep'), expected_beeps)
+
+    def test_read_sound_rejects_invalid_values_before_connecting(self):
+        for args in [('read-epc', '2'), ('read-epc', 'false'), ('read-epc', '0', '1')]:
+            with self.subTest(args=args):
+                r = self.run_bridge(*args)
+                self.assertEqual(r.returncode, 1)
+                self.assertEqual(r.stdout.strip(), 'ERROR=SOUND_INVALID')
+                self.assertNotIn('CALL=Connect', r.stderr)
+
     def test_no_beep_for_diagnostics_no_tag_or_failed_read(self):
         for args, values in [
             (('status',), {}), (('get-power',), {}), (('set-power','18'), {}),

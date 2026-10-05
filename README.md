@@ -171,9 +171,15 @@ Para realizar una lectura real:
 
 ```bash
 curl 'http://localhost/rfid-bridge/PADBridge.php?action=read-epc'
+curl 'http://localhost/rfid-bridge/PADBridge.php?action=read-epc&sound=0'
 ```
 
 Una lectura puede devolver `DETECTED=...` o `NO_TAG` en el campo `resultado`.
+El pitido de read-epc está habilitado por defecto. Envía sound=0 para omitirlo
+o sound=1 para solicitarlo explícitamente. También se acepta sound en el cuerpo
+de una petición POST. Solo admite 0 o 1; cualquier otro valor devuelve
+ERROR=SOUND_INVALID. Las llamadas antiguas que omiten sound conservan el pitido.
+
 PHP coordina las peticiones de esta instalación mediante un bloqueo: espera
 hasta 5 segundos si otra operación está usando el bridge y devuelve
 `ERROR=BRIDGE_BUSY` si continúa ocupado. El proceso tiene un límite de 30
