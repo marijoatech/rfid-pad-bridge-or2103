@@ -265,6 +265,19 @@ el bridge solo garantiza que no inicia un segundo intento propio en esta acción
 La pantalla exige retirar la etiqueta y observar `NO_TAG` antes de aceptar otra.
 `read-epc`, `inventory`, `write-epc` y `clear` conservan sus contratos previos.
 
+En una prueba física autorizada el 5 de octubre de 2026 en Windows (COM5,
+potencia 10), una sola etiqueta se leyó como
+`E2843611000010000BAF60AF`. `clear-verified` hizo un intento y respondió
+`ERROR=VERIFY_MISMATCH`, con `write_attempted=true` y `verified=false`.
+El inventario independiente posterior siguió mostrando el EPC original.
+Tras retirar la etiqueta, otro inventario respondió `NO_TAG`. No se repitió
+la escritura. Esto confirma que el flujo rechaza un ACK sin
+lectura de ceros; no demuestra que ese tag pueda escribirse con el comando
+actual. El motivo físico o de protocolo de la falta de cambio queda pendiente
+de diagnóstico con el fabricante o con una etiqueta de prueba conocida como
+grabable. La instalación existente en `C:\wamp64\www\rfid-bridge` no se
+modificó durante esta prueba.
+
 Las pruebas automáticas usan SDK y serial simulados; no escriben etiquetas
 físicas. Para una validación física posterior, use una etiqueta de prueba
 aislada, confirme por inventario su EPC original, invoque `clear-verified` una
