@@ -25,8 +25,30 @@ namespace OR2127LIB {
     }
     public class ReaderManager {
         public static ReaderManager Current;
-        public ReaderManager() { Current = this; }
+        private int soundMode;
+        private int soundReads;
+        private int soundSets;
+        public ReaderManager() { Current = this; soundMode=int.Parse(Value("FAKE_SOUND_STATE", "3")); }
         public byte[] SafeRequest(byte[] command) {
+            if(command != null && command.Length >= 4 && (command[2] == 0x13 || command[2] == 0x14)) {
+                if (closed || stopRequests == 0 || stopRequests != stopReplies) throw new InvalidOperationException("SOUND_BEFORE_STOP");
+                int sum=0; for(int i=1;i<command.Length-1;i++) sum+=command[i];
+                if(command[0]!=0xA5 || command[1]!=command.Length-4 || command[command.Length-1]!=(byte)sum)
+                    throw new InvalidOperationException("BAD_SOUND_REQUEST");
+                bool set=command[2]==0x13;
+                if(set) { soundSets++; soundMode=command[3]; Log("SoundSet:"+soundMode); }
+                else { soundReads++; Log("SoundGet:"+soundMode); }
+                string fault=Value(set ? (soundSets==1 ? "FAKE_SOUND_SET" : "FAKE_SOUND_RESTORE") :
+                    (soundReads==1 ? "FAKE_SOUND_GET" : "FAKE_SOUND_VERIFY"), "normal");
+                if(fault=="throw") throw new InvalidOperationException("SOUND_IO_FAILED");
+                if(fault=="null") return null;
+                byte[] response=set ? Frame(0x13,0) : Frame(0x14,0,(byte)(fault=="mismatch" ? 2 : soundMode));
+                if(fault=="status") response=Frame(command[2],1);
+                if(fault=="command") response=Frame(0x22,0,(byte)soundMode);
+                if(fault=="length") response=Frame(command[2],0,1,2);
+                if(fault=="checksum") response[response.Length-1]++;
+                return response;
+            }
             if (command == null || command.Length != 4 || command[0] != 0xA5 || command[1] != 0 || command[2] != 0x19 || command[3] != 0x19)
                 throw new InvalidOperationException("FORBIDDEN_RAW_REQUEST");
             if (closed || stopRequests != stopReplies) { Log("UnsafeBeepBeforeStop"); throw new InvalidOperationException("STOP_NOT_CONFIRMED"); }
@@ -115,6 +137,7 @@ namespace OR2127LIB {
         public void SendBuzzer(out string msg) { Log("SendBuzzer"); msg=""; throw new InvalidOperationException("FORBIDDEN_UNSAFE_BUZZER_SEND"); }
         public bool GetVersion(out string version) { version="V1.2.3"; return true; }
         public bool Inventory(out string msg) {
+            Log("InventorySound:"+soundMode);
             Log("Inventory"); msg="";
             if (Value("FAKE_INVENTORY", "1") == "throw") throw new InvalidOperationException("FAKE_INVENTORY_THROW");
             if (Value("FAKE_INVENTORY", "1") != "1") return false;
@@ -187,7 +210,7 @@ public class BeepAckHarness {
                 del env[name]
         env.update(values)
         result = subprocess.run([str(self.exe), *args], capture_output=True, text=True, env=env, timeout=10, cwd=self.base)
-        # Includes cleanup after failures: command 0x13 must never be sent automatically.
+        # Only the validated raw sound path may change the buzzer on request.
         self.assertNotIn('CALL=SetLedBuzzer:', result.stderr, 'LED configuration can leave this pad unresponsive')
         self.assertNotIn('CALL=SetReadArea', result.stderr, 'Tag operations must preserve the auto/trigger read area')
         self.assertNotIn('CALL=SendBuzzer', result.stderr, 'SDK SendBuzzer discards pending TX and can leave the pad unresponsive')
@@ -362,6 +385,58 @@ public class BeepAckHarness {
                 self.assertEqual(r.returncode, 0, r.stdout)
                 self.assertEqual(r.stdout.strip(), 'DETECTED=000000000000000001000028')
                 self.assertEqual(r.stderr.splitlines().count('CALL=SafeBeep'), expected_beeps)
+
+    def test_silent_read_mutes_automatic_buzzer_and_restores_light_and_sound(self):
+        for state in range(4):
+            with self.subTest(state=state):
+                r = self.run_bridge('read-epc', '0', FAKE_SOUND_STATE=str(state))
+                self.assertEqual(r.returncode, 0, r.stdout)
+                self.assertIn('CALL=InventorySound:' + str(state & 1), r.stderr)
+                if state & 2:
+                    self.assertLess(r.stderr.index('CALL=SoundSet:' + str(state & 1)), r.stderr.index('CALL=Inventory\n'))
+                    self.assertLess(r.stderr.index('CALL=StopReply:3'), r.stderr.index('CALL=SoundSet:' + str(state)))
+                else:
+                    self.assertNotIn('CALL=SoundSet:', r.stderr)
+                self.assertNotIn('CALL=SafeBeep', r.stderr)
+
+    def test_silent_read_rejects_unconfirmed_state_without_inventory(self):
+        for fault in ['null', 'throw', 'status', 'command', 'length', 'checksum']:
+            with self.subTest(fault=fault):
+                r = self.run_bridge('read-epc', '0', FAKE_SOUND_GET=fault)
+                self.assertNotEqual(r.returncode, 0)
+                self.assertNotIn('CALL=Inventory\n', r.stderr)
+                self.assertNotIn('CALL=SoundSet:', r.stderr)
+
+    def test_silent_read_restores_even_if_mute_ack_is_lost(self):
+        r = self.run_bridge('read-epc', '0', FAKE_SOUND_SET='null')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn('CALL=Inventory\n', r.stderr)
+        self.assertIn('CALL=SoundSet:3', r.stderr)
+
+    def test_silent_read_verifies_setting_before_inventory(self):
+        r = self.run_bridge('read-epc', '0', FAKE_SOUND_VERIFY='mismatch')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn('CALL=Inventory\n', r.stderr)
+        self.assertIn('CALL=SoundSet:3', r.stderr)
+
+    def test_silent_read_restores_on_no_tag_and_inventory_failure(self):
+        for values in [{'FAKE_NO_TAG':'1'}, {'FAKE_INVENTORY':'0'}, {'FAKE_INVENTORY':'throw'}]:
+            with self.subTest(values=values):
+                r = self.run_bridge('read-epc', '0', **values)
+                self.assertIn('CALL=SoundSet:3', r.stderr)
+                self.assertNotIn('CALL=SafeBeep', r.stderr)
+
+    def test_silent_read_does_not_report_success_if_restore_fails(self):
+        r = self.run_bridge('read-epc', '0', FAKE_SOUND_RESTORE='null')
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.stdout.strip(), 'ERROR=SOUND_RESTORE_FAILED')
+
+    def test_normal_operations_never_configure_automatic_sound(self):
+        for args in [('read-epc',), ('read-epc','1'), ('inventory',), ('status',)]:
+            r = self.run_bridge(*args)
+            self.assertEqual(r.returncode, 0, r.stdout)
+            self.assertNotIn('CALL=SoundSet:', r.stderr)
+            self.assertNotIn('CALL=SoundGet:', r.stderr)
 
     def test_read_sound_rejects_invalid_values_before_connecting(self):
         for args in [('read-epc', '2'), ('read-epc', 'false'), ('read-epc', '0', '1')]:

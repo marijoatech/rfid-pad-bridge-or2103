@@ -34,6 +34,8 @@ class FakeSerial:
         self.writes = []
         self.closed = False
         self.resets_after_start = 0
+        self.sound_mode = 3
+        self.inventory_sound = []
 
     def write(self, data):
         data = bytes(data)
@@ -41,12 +43,18 @@ class FakeSerial:
         cmd = data[2]
         if cmd == 0x21:
             self.power = data[3]
+        if cmd == 0x13:
+            self.sound_mode = data[3]
+        if cmd == 0x53:
+            self.inventory_sound.append(self.sound_mode)
         if cmd in self.replies:
             chunks = self.replies[cmd]
             if callable(chunks):
                 chunks = chunks()
         elif cmd == 0x22:
             chunks = [bridge.command(0x22, bytes([0, self.power]))]
+        elif cmd == 0x14:
+            chunks = [bridge.command(0x14, bytes([0, self.sound_mode]))]
         else:
             chunks = [bridge.command(cmd, b"\x00")]
         self.pending.extend(chunks)
@@ -382,6 +390,65 @@ class BridgeTests(unittest.TestCase):
                 code, output, factory = self.invoke(args)
                 self.assertEqual((code, output), (1, "ERROR=SOUND_INVALID\n"))
                 factory.assert_not_called()
+
+    def test_silent_read_preserves_light_and_restores_buzzer(self):
+        for state in range(4):
+            with self.subTest(state=state):
+                device = FakeSerial(replies={0x53: [ACK_START + ZERO_FRAME]})
+                device.sound_mode = state
+                code, output, _ = self.invoke(['read-epc', '0'], device)
+                self.assertEqual(code, 0, output)
+                self.assertEqual(device.inventory_sound, [state & 1])
+                self.assertEqual(device.sound_mode, state)
+                self.assertEqual([f[3] for f in device.writes if f[2] == 0x13],
+                                 [state & 1, state] if state & 2 else [])
+                self.assertEqual(device.writes[0], bytes.fromhex('A5005454'))
+                self.assertFalse(any(f[2] == 0x19 for f in device.writes))
+                self.assertTrue(device.closed)
+
+    def test_silent_read_requires_valid_sound_state_before_inventory(self):
+        for reply in [[], [bytes.fromhex('A50214000318')],
+                      [bridge.command(0x14, b'\x01\x03')],
+                      [bridge.command(0x14, b'\x00\x04')],
+                      [bridge.command(0x14, b'\x00')]]:
+            with self.subTest(reply=reply):
+                device = FakeSerial(replies={0x14: reply})
+                self.assertEqual(self.invoke(['read-epc','0'], device)[0], 1)
+                self.assertFalse(any(f[2] in (0x13, 0x53) for f in device.writes))
+                self.assertTrue(device.closed)
+
+    def test_silent_read_restores_when_mute_ack_lost(self):
+        calls = itertools.count()
+        device = FakeSerial(replies={0x13: lambda: [] if next(calls) == 0 else [bridge.command(0x13, b'\x00')]})
+        self.assertEqual(self.invoke(['read-epc','0'], device)[0], 1)
+        self.assertFalse(any(f[2] == 0x53 for f in device.writes))
+        self.assertEqual(device.sound_mode, 3)
+
+    def test_silent_read_does_not_read_if_setting_does_not_match(self):
+        device = FakeSerial(replies={0x14: [bridge.command(0x14, b'\x00\x03')]})
+        self.assertEqual(self.invoke(['read-epc','0'], device)[:2], (1, 'ERROR=SOUND_VERIFY_FAILED\n'))
+        self.assertFalse(any(f[2] == 0x53 for f in device.writes))
+        self.assertEqual(device.sound_mode, 3)
+
+    def test_silent_read_restores_after_no_tag_or_failed_inventory(self):
+        for reply in [[ACK_START], [], [bridge.command(0x53, b'\x01')]]:
+            with self.subTest(reply=reply):
+                device = FakeSerial(replies={0x53: reply})
+                self.invoke(['read-epc','0'], device)
+                self.assertEqual([f[3] for f in device.writes if f[2] == 0x13], [1, 3])
+                self.assertTrue(device.closed)
+
+    def test_silent_read_reports_restore_failure_instead_of_epc(self):
+        calls = itertools.count()
+        device = FakeSerial(replies={0x13: lambda: [bridge.command(0x13,b'\x00')] if next(calls) == 0 else [],
+                                     0x53: [ACK_START + ZERO_FRAME]})
+        self.assertEqual(self.invoke(['read-epc','0'], device)[:2], (1, 'ERROR=SOUND_RESTORE_FAILED\n'))
+
+    def test_normal_reads_do_not_configure_automatic_buzzer(self):
+        for args in [['read-epc'], ['read-epc','1'], ['inventory'], ['status']]:
+            device = FakeSerial()
+            self.assertEqual(self.invoke(args, device)[0], 0)
+            self.assertFalse(any(f[2] in (0x13, 0x14) for f in device.writes))
 
     def test_saved_power_mismatch_prevents_inventory(self):
         self.power_config.write_text('{"power":15}', encoding="utf-8")

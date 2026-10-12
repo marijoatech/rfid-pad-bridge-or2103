@@ -142,8 +142,7 @@ public class OR2103Bridge
         }
 		finally
 		{
-            // No configurar LED/buzzer (0x13): el OR2103 probado deja de aceptar comandos.
-            // Cerrar el puerto sin enviar configuraciones adicionales al lector.
+            // La lectura silenciosa restaura su buzzer antes de llegar aqui.
             TryClose(readerManager);
             if (action == "inventory" || action == "read-epc" || action == "write-epc" || action == "clear" || action == "clear-verified")
                 Thread.Sleep(800);
@@ -408,7 +407,7 @@ public class OR2103Bridge
 
     private static int Inventory(bool onlyFirst, bool sound = true)
     {
-        List<string> copy = ScanTags(onlyFirst);
+        List<string> copy = onlyFirst && !sound ? ScanTagsSilently() : ScanTags(onlyFirst);
         if (copy.Count == 0)
         {
             Out("NO_TAG");
@@ -425,6 +424,59 @@ public class OR2103Bridge
             foreach (string epc in copy) Out("DETECTED=" + epc);
         }
         return 0;
+    }
+
+    private static byte[] SoundRequest(byte command, params byte[] data)
+    {
+        byte[] frame = new byte[data.Length + 4];
+        frame[0] = 0xA5; frame[1] = (byte)data.Length; frame[2] = command;
+        Array.Copy(data, 0, frame, 3, data.Length);
+        int checksum = 0;
+        for (int i = 1; i < frame.Length - 1; i++) checksum += frame[i];
+        frame[frame.Length - 1] = (byte)checksum;
+        // El getter del SDK no valida comando/checksum: comprobar la respuesta completa.
+        byte[] reply = ReaderUtil.GetInstance().SendGetData(frame);
+        int length = command == 0x14 ? 6 : 5;
+        if (reply == null || reply.Length != length || reply[0] != 0xA5 ||
+            reply[1] != length - 4 || reply[2] != command || reply[3] != 0)
+            throw new InvalidOperationException("SOUND_RESPONSE_INVALID");
+        checksum = 0;
+        for (int i = 1; i < reply.Length - 1; i++) checksum += reply[i];
+        if ((byte)checksum != reply[reply.Length - 1])
+            throw new InvalidOperationException("SOUND_CHECKSUM");
+        return reply;
+    }
+
+    private static int ReadSoundMode()
+    {
+        int mode = SoundRequest(0x14)[4];
+        if (mode > 3) throw new InvalidOperationException("SOUND_STATE_INVALID");
+        return mode;
+    }
+
+    private static void SetSoundMode(int mode)
+    {
+        SoundRequest(0x13, (byte)mode);
+        if (ReadSoundMode() != mode) throw new InvalidOperationException("SOUND_VERIFY_FAILED");
+    }
+
+    private static List<string> ScanTagsSilently()
+    {
+        // PrepareReader ya confirmo STOP. Bit 0 = luz; bit 1 = pitido automatico.
+        int original = ReadSoundMode();
+        if ((original & 2) == 0) return ScanTags(true);
+        try
+        {
+            SetSoundMode(original & 1);
+            return ScanTags(true);
+        }
+        finally
+        {
+            // Incluso un ACK perdido puede haber aplicado el cambio. Restaurar tambien
+            // ante errores, pero nunca configurar mientras el inventario siga activo.
+            try { StopInventoryConfirmed(); SetSoundMode(original); }
+            catch { throw new InvalidOperationException("SOUND_RESTORE_FAILED"); }
+        }
     }
 
     private static int ClearVerified(string expected)
