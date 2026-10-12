@@ -16,9 +16,12 @@ cambia el selector a USB y vuelve a conectarlo. Desde una terminal:
 
 ```bash
 cd /var/www/html
-sudo git clone https://github.com/marijoatech/rfid-pad-bridge-or2103.git rfid-bridge
+git clone https://github.com/marijoatech/rfid-pad-bridge-or2103.git rfid-bridge
 cd rfid-bridge
-sudo bash install.sh
+bash install.sh
+usermod -aG dialout www-data
+systemctl restart apache2
+
 ```
 
 El último argumento de `git clone`, **`rfid-bridge`**, fija el nombre de la
