@@ -1,3 +1,4 @@
 linux/OR2103Bridge.py.install-backup
+config.json.install-backup
 __pycache__/
 /runtime/

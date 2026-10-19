@@ -7,7 +7,7 @@ RFID Bridge OR2103: instalar en Linux Mint con Apache y PHP existentes.
 Uso: sudo bash install.sh [--port DISPOSITIVO] [--web-user USUARIO] [--url URL]
      sudo bash install.sh --check [--web-user USUARIO] [--url URL]
 
-  --port      Configura PORT en Python, guardando una copia antes del primer cambio.
+  --port      Fija linux.port en config.json. Sin esta opcion se detecta el CP2102.
   --web-user  Usuario real de PHP (predeterminado: www-data).
   --url       URL de verificacion (http://localhost/rfid-bridge/PADBridge.php).
   --check     Solo verifica; no instala, modifica, reinicia ni abre el lector.
@@ -53,7 +53,7 @@ fi
 export PATH="/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 [[ $project_dir == /var/www/html/rfid-bridge ]] || fail 'Instala este proyecto en /var/www/html/rfid-bridge antes de ejecutar el script.'
-[[ -f $project_dir/PADBridge.php && -f $project_dir/lib/Bridge.php && -f $project_dir/linux/OR2103Bridge.py ]] || fail 'Faltan archivos del bridge OR2103.'
+[[ -f $project_dir/PADBridge.php && -f $project_dir/lib/Bridge.php && -f $project_dir/linux/OR2103Bridge.py && -f $project_dir/config.json ]] || fail 'Faltan archivos del bridge OR2103.'
 command -v apache2ctl >/dev/null 2>&1 || fail 'Apache debe estar instalado y PHP funcionando antes de instalar el bridge.'
 command -v systemctl >/dev/null 2>&1 || fail 'Se necesita systemd para comprobar los servicios de esta instalacion.'
 id "$web_user" >/dev/null 2>&1 || fail "No existe el usuario de PHP: $web_user"
@@ -86,9 +86,10 @@ if [[ -e $runtime_dir/antenna-power.json ]]; then
     runuser -u "$web_user" -- test -r "$runtime_dir/antenna-power.json" || fail "$web_user no puede leer runtime/antenna-power.json."
 fi
 
-# Leer o ajustar la constante sin importar ni ejecutar el controlador del lector.
-reader_port=$(python3 - "$project_dir/linux/OR2103Bridge.py" "$requested_port" <<'PY'
+# Leer, detectar o ajustar linux.port en config.json sin ejecutar el controlador.
+reader_port=$(python3 - "$project_dir/config.json" "$project_dir/linux/OR2103Bridge.py" "$requested_port" "$check_only" <<'PY'
 import ast
+import json
 import os
 import pathlib
 import shutil
@@ -97,60 +98,133 @@ import sys
 import tempfile
 
 try:
-    source = pathlib.Path(sys.argv[1])
-    requested = sys.argv[2]
-    original = source.read_bytes()
-    text = original.decode("utf-8-sig")
+    import serial.tools.list_ports as list_ports
+except ImportError:
+    list_ports = None
+
+
+def is_device(path):
+    try:
+        return stat.S_ISCHR(os.stat(path).st_mode)
+    except OSError:
+        return False
+
+
+def usb_serial_ports():
+    if list_ports is None:
+        return []
+    ports = []
+    seen = set()
+    for info in list_ports.comports():
+        # En Linux, un adaptador USB serial expone vid/pid; los ttyS nativos no.
+        if info.vid is None or not str(info.device).startswith("/dev/") or info.device in seen:
+            continue
+        seen.add(info.device)
+        ports.append(info)
+    return ports
+
+
+def describe(info):
+    return "{} ({:04X}:{:04X}, {})".format(
+        info.device, info.vid, info.pid, info.description or "USB serial")
+
+
+def detect_port(ports):
+    cp2102 = [info for info in ports if info.vid == 0x10C4 and info.pid == 0xEA60]
+    if len(cp2102) == 1:
+        return cp2102[0].device
+    if len(cp2102) > 1:
+        raise ValueError("Hay varios CP2102 conectados: " +
+                         ", ".join(describe(info) for info in cp2102) +
+                         ". Indica el puerto del pad con --port.")
+    if len(ports) == 1:
+        return ports[0].device
+    if not ports:
+        raise ValueError("No se detecto ningun puerto USB serial. Conecta el pad en modo USB.")
+    raise ValueError("Hay varios puertos USB serial: " +
+                     ", ".join(describe(info) for info in ports) +
+                     ". Indica el puerto del pad con --port.")
+
+
+def update_port(new_port):
+    backup = config_path.with_name(config_path.name + ".install-backup")
+    if not backup.exists():
+        shutil.copy2(config_path, backup)
+    section["port"] = new_port
+    updated = json.dumps(document, indent=2, ensure_ascii=False) + "\n"
+    previous = config_path.stat()
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=config_path.parent,
+                                         delete=False) as output:
+            temporary = pathlib.Path(output.name)
+            output.write(updated)
+        os.chmod(temporary, stat.S_IMODE(previous.st_mode))
+        os.chown(temporary, previous.st_uid, previous.st_gid)
+        os.replace(temporary, config_path)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
+    print("linux.port actualizado en config.json: " + new_port +
+          ". Respaldo: " + str(backup), file=sys.stderr)
+
+
+try:
+    config_path = pathlib.Path(sys.argv[1])
+    source_path = pathlib.Path(sys.argv[2])
+    requested = sys.argv[3]
+    check_only = sys.argv[4] == "true"
+
+    # La constante del controlador queda como respaldo si config.json no define linux.port.
+    source = source_path.read_text(encoding="utf-8-sig")
     assignments = [
-        node for node in ast.parse(text).body
+        node for node in ast.parse(source).body
         if isinstance(node, ast.Assign) and any(
             isinstance(target, ast.Name) and target.id == "PORT" for target in node.targets
         )
     ]
     if len(assignments) != 1:
         raise ValueError("se esperaba una sola constante PORT en el fuente")
-    assignment = assignments[0]
-    port = ast.literal_eval(assignment.value)
+    fallback = ast.literal_eval(assignments[0].value)
+
+    document = json.loads(config_path.read_text(encoding="utf-8-sig"))
+    if not isinstance(document, dict):
+        raise ValueError("config.json debe contener un objeto")
+    section = document.get("linux")
+    if not isinstance(section, dict):
+        raise ValueError("config.json debe contener la seccion linux")
+    configured = section.get("port", fallback)
+    configured_valid = (isinstance(configured, str) and configured.startswith("/") and
+                        not any(c in configured for c in "\r\n\x00"))
+
     if requested:
         if any(c in requested for c in "\r\n\x00"):
             raise ValueError("el puerto contiene caracteres invalidos")
-        if not stat.S_ISCHR(os.stat(requested).st_mode):
+        if not is_device(requested):
             raise ValueError("el puerto indicado no es un dispositivo")
-        if port != requested:
-            if assignment.lineno != assignment.end_lineno or len(assignment.targets) != 1:
-                raise ValueError("PORT debe ser una asignacion simple en una linea")
-            lines = text.splitlines(keepends=True)
-            # Los desplazamientos del AST son bytes UTF-8, no indices Unicode.
-            line = lines[assignment.lineno - 1].encode("utf-8")
-            replacement = ("PORT = " + repr(requested)).encode("utf-8")
-            lines[assignment.lineno - 1] = (
-                line[:assignment.col_offset] + replacement + line[assignment.end_col_offset:]
-            ).decode("utf-8")
-            updated = "".join(lines).encode("utf-8")
-            if original.startswith(b"\xef\xbb\xbf"):
-                updated = b"\xef\xbb\xbf" + updated
-            backup = source.with_name(source.name + ".install-backup")
-            if not backup.exists():
-                shutil.copy2(source, backup)
-            previous = source.stat()
-            temporary = None
-            try:
-                with tempfile.NamedTemporaryFile(dir=source.parent, delete=False) as output:
-                    temporary = pathlib.Path(output.name)
-                    output.write(updated)
-                os.chmod(temporary, stat.S_IMODE(previous.st_mode))
-                os.chown(temporary, previous.st_uid, previous.st_gid)
-                os.replace(temporary, source)
-            finally:
-                if temporary is not None and temporary.exists():
-                    temporary.unlink()
-            print("PORT actualizado. Respaldo: " + str(backup), file=sys.stderr)
         port = requested
-    if not isinstance(port, str) or not os.path.isabs(port) or any(c in port for c in "\r\n\x00"):
-        raise ValueError("PORT debe contener una ruta absoluta del dispositivo serial")
+    else:
+        ports = usb_serial_ports()
+        cp2102 = [info for info in ports if info.vid == 0x10C4 and info.pid == 0xEA60]
+        if len(cp2102) == 1:
+            port = cp2102[0].device
+        elif len(cp2102) > 1 and not (configured_valid and
+                                       any(info.device == configured for info in cp2102)):
+            detect_port(ports)  # varios CP2102 sin una eleccion configurada
+        elif configured_valid and is_device(configured):
+            port = configured
+        else:
+            port = detect_port(ports)
+
+    if port != configured:
+        if check_only:
+            raise ValueError("Se detecto el puerto " + port + ", pero config.json usa " +
+                             str(configured) + ". Ejecuta sudo bash install.sh sin --check " +
+                             "para actualizar la configuracion.")
+        update_port(port)
     print(port)
 except (OSError, SyntaxError, ValueError, TypeError) as error:
-    print("ERROR al configurar PORT: " + str(error), file=sys.stderr)
+    print("ERROR al configurar el puerto: " + str(error), file=sys.stderr)
     sys.exit(1)
 PY
 )

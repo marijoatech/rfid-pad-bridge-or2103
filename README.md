@@ -86,6 +86,8 @@ no elimina funciones ni cambia las llamadas de Marijoa.
   cuando puedas reiniciar esos servicios si alojan otras aplicaciones.
 - Crea `runtime/` con propietario PHP y permisos `0700` para guardar la potencia
   de esta máquina. No da permisos de escritura sobre el resto del proyecto.
+- Lee `linux.port` de `config.json`; si no está disponible, detecta el CP2102
+  y actualiza ese valor. Guarda un respaldo `config.json.install-backup`.
 - Comprueba archivos, dependencias y permisos del dispositivo como el usuario de PHP.
 - Comprueba que la URL del bridge devuelva JSON, sin enviar comandos al lector.
 
@@ -126,7 +128,12 @@ La lectura mediante Apache devolvió `DETECTED=...`, código de salida `0` y
 Los puertos `ttyS0`, `ttyS1`, etc. que figuren en el listado no deben elegirse
 por ser los primeros: busca el dispositivo USB correspondiente al pad.
 
-Para configurar un puerto diferente durante la instalación:
+El instalador detecta automáticamente el CP2102 (`10C4:EA60`) y actualiza
+`linux.port` en `config.json`. Si hay varios adaptadores USB serial, prioriza
+el único CP2102; si hay varios CP2102 o ninguno identificable, no adivina:
+muestra la lista y pide `--port`.
+
+Para fijar un puerto diferente durante la instalación:
 
 ```bash
 sudo bash install.sh --port /dev/ttyACM0
@@ -143,12 +150,14 @@ sudo bash install.sh --port /dev/serial/by-id/RUTA_REAL_DEL_PAD
 Reemplaza `RUTA_REAL_DEL_PAD` por el nombre real. Con varios dispositivos
 conectados, identifica el pad antes de elegirlo; el instalador no adivina el modelo.
 
-**Linux todavía no lee `config.json`.** `--port` actualiza únicamente la
-constante `PORT` en `linux/OR2103Bridge.py`. Antes del primer cambio guarda una
-copia en `linux/OR2103Bridge.py.install-backup`. Conserva ese ajuste al actualizar
-el repositorio. La velocidad sigue en Python: `BAUD = 115200`. La potencia se
-puede cambiar desde la guía o con `set-power`; el valor local guardado tiene
-prioridad sobre la potencia predeterminada del controlador.
+**Linux y Windows leen `config.json`.** En Linux se usa la sección `linux`:
+`port`, `baudrate`, `timeout_ms` y `power`. Si falta una clave, se usa el valor
+por defecto del controlador. `--port` fija `linux.port`; sin esa opción, el
+instalador detecta el CP2102 y actualiza el valor si cambió. Antes de modificar
+guarda una copia en `config.json.install-backup`. La potencia de `config.json`
+es solo el valor predeterminado: `runtime/antenna-power.json`, guardado por
+`set-power`, tiene prioridad. Conserva `config.json` al actualizar; cada máquina
+puede tener un puerto distinto.
 
 ## Comprobar una instalación existente
 
@@ -320,8 +329,8 @@ Límites y pendientes:
   valida lectura, inventario y escritura con una etiqueta de prueba en Debian.
 - La API no incluye autenticación y acepta modificaciones mediante GET.
   Restringe su acceso en Apache o en la red antes de habilitar otros equipos.
-- Linux utiliza las constantes de Python para puerto, velocidad y tiempos.
-  Windows carga su sección de `config.json` desde la raíz del proyecto.
+- Linux y Windows cargan su sección de `config.json` desde la raíz del
+  proyecto. Si una clave falta, Linux usa las constantes del controlador.
 
 ## Conexión y potencia de la antena
 
@@ -345,7 +354,7 @@ de éxito, ambas operaciones devuelven `POWER=15\nOK` para ese ejemplo.
 La API guarda el valor confirmado en `runtime/antenna-power.json`, un archivo
 local excluido de Git. Las lecturas y escrituras vuelven a aplicar ese ajuste;
 así no se pierde al iniciar el siguiente proceso o al actualizar el código.
-Sin un ajuste guardado se usa la potencia predeterminada del controlador
+Sin un ajuste guardado se usa `linux.power` o `windows.power` de `config.json`
 (10 en la configuración incluida). Cada máquina conserva su propio valor.
 
 En una instalación Linux existente, ejecuta `sudo bash install.sh` después de
@@ -454,6 +463,7 @@ permisos CORS existentes.
 | HTTP devuelve código PHP o HTML | Configuración de PHP en Apache; consulta sus registros |
 | `ERROR=UNKNOWN_ACTION` | Revisa el nombre de la acción; `status` e `inventory` están implementados. Actualiza si todavía usas una revisión anterior |
 | `ERROR=VERSION_NOT_SUPPORTED` | La consulta de versión del lector aún no está implementada en Linux |
+| `ERROR=CONFIG_INVALID` | Revisa `config.json`: `linux` debe ser un objeto con `port` absoluto y `baudrate`, `timeout_ms` y `power` válidos |
 | `ERROR=READER_NOT_RESPONDING` o `ERROR=CONNECT_FAILED` | Revisa la conexión USB y el puerto configurado. Desenchufa el USB del lector, espera 10 segundos y vuelve a enchufarlo en modo USB. Comprueba la conexión y consulta la potencia o lee el EPC antes de repetir un cambio |
 | `ERROR=BRIDGE_BUSY` | Otra petición ocupa el bridge; espera a que termine antes de repetir |
 | `ERROR=BRIDGE_TIMEOUT` | El proceso excedió el límite; revisa puerto y lector. Antes de repetir una escritura, lee el EPC para saber si se aplicó |
@@ -504,6 +514,12 @@ sudo bash install.sh --check
 
 Si Git detecta cambios incompatibles, conserva y revisa tus ajustes antes de
 continuar. No descartes el puerto configurado para esa máquina.
+
+`config.json` es un archivo versionado. Si cada máquina tiene un puerto
+distinto, ese cambio aparecerá en `git status`; no lo descartes. Si venías de
+una versión que editaba `PORT` en `linux/OR2103Bridge.py`, copia ese valor a
+`linux.port` en `config.json` y restaura el `.py` antes de actualizar: el
+archivo modificado puede impedir el `pull`.
 
 Antes de desplegar en las diez máquinas, valida la instalación y una lectura
 en la primera. Instala la misma revisión validada en las máquinas que usen el

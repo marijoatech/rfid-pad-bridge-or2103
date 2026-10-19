@@ -86,6 +86,10 @@ class BridgeTests(unittest.TestCase):
         patcher = mock.patch.object(bridge, "POWER_CONFIG_PATH", self.power_config)
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.config_path = pathlib.Path(temporary.name) / "config.json"
+        config_patcher = mock.patch.object(bridge, "CONFIG_PATH", self.config_path)
+        config_patcher.start()
+        self.addCleanup(config_patcher.stop)
 
     def invoke(self, args, device=None):
         device = FakeSerial() if device is None else device
@@ -109,6 +113,51 @@ class BridgeTests(unittest.TestCase):
                                               "TIMEOUT_MS=" + str(bridge.TIMEOUT_MS), "POWER=9"])
         self.assertEqual(device.writes, [bytes.fromhex("A5 00 22 22")])
         self.assertTrue(device.closed)
+
+    def test_linux_config_sets_connection_values(self):
+        self.config_path.write_text(json.dumps({
+            "linux": {"port": "/dev/ttyUSB7", "baudrate": 57600,
+                      "timeout_ms": 900, "power": 12},
+        }), encoding="utf-8")
+        code, output, factory = self.invoke(["status"])
+        self.assertEqual(code, 0)
+        factory.assert_called_once_with("/dev/ttyUSB7", 57600, timeout=0.15)
+        self.assertIn("PORT=/dev/ttyUSB7", output)
+        self.assertIn("BAUDRATE=57600", output)
+        self.assertIn("TIMEOUT_MS=900", output)
+        self.assertEqual(bridge.configured_power(), 12)
+
+    def test_missing_linux_config_uses_defaults(self):
+        code, output, factory = self.invoke(["status"])
+        self.assertEqual(code, 0)
+        factory.assert_called_once_with("/dev/ttyUSB0", 115200, timeout=0.15)
+        self.assertIn("PORT=/dev/ttyUSB0", output)
+        self.assertIn("BAUDRATE=115200", output)
+        self.assertIn("TIMEOUT_MS=1500", output)
+
+    def test_partial_linux_config_keeps_other_defaults(self):
+        self.config_path.write_text('{"linux":{"baudrate":57600}}', encoding="utf-8")
+        code, output, factory = self.invoke(["status"])
+        self.assertEqual(code, 0)
+        factory.assert_called_once_with("/dev/ttyUSB0", 57600, timeout=0.15)
+        self.assertIn("TIMEOUT_MS=1500", output)
+
+    def test_invalid_linux_config_fails_before_open(self):
+        for content in ['bad json', '[]', '{"linux":[]}', '{"linux":{"port":"ttyUSB0"}}',
+                        '{"linux":{"baudrate":0}}', '{"linux":{"timeout_ms":-1}}',
+                        '{"linux":{"power":4}}']:
+            with self.subTest(content=content):
+                self.config_path.write_text(content, encoding="utf-8")
+                code, output, factory = self.invoke(["status"])
+                self.assertEqual((code, output), (1, "ERROR=CONFIG_INVALID\n"))
+                factory.assert_not_called()
+
+    def test_saved_power_overrides_linux_config_default(self):
+        self.config_path.write_text('{"linux":{"power":12}}', encoding="utf-8")
+        self.power_config.write_text('{"power":15}', encoding="utf-8")
+        device = FakeSerial()
+        self.assertEqual(self.invoke(["read-epc"], device)[0], 0)
+        self.assertIn(bytes.fromhex("A501210F31"), device.writes)
 
     def test_power_response_fragmentation_and_noise(self):
         response = bytes.fromhex("A5 02 22 00 0A 2E")

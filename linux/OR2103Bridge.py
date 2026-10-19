@@ -11,9 +11,15 @@ from contextlib import contextmanager
 
 PORT = "/dev/ttyUSB0"
 BAUD = 115200
-POWER_HEX = "0A"  # 0A=10, 0F=15, 1E=30
+DEFAULT_POWER = 10
 TIMEOUT_MS = 1500
-POWER_CONFIG_PATH = Path(__file__).resolve().parents[1] / "runtime" / "antenna-power.json"
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+CONFIG_PATH = PROJECT_DIR / "config.json"
+POWER_CONFIG_PATH = PROJECT_DIR / "runtime" / "antenna-power.json"
+_FALLBACK_PORT = PORT
+_FALLBACK_BAUD = BAUD
+_FALLBACK_TIMEOUT_MS = TIMEOUT_MS
+_FALLBACK_POWER = DEFAULT_POWER
 
 
 def checksum(data):
@@ -48,12 +54,59 @@ def normalize_power(value):
     return int(value)
 
 
+def load_linux_config(path=None):
+    """Leer la seccion linux de config.json; si falta, usar los valores por defecto."""
+    path = CONFIG_PATH if path is None else path
+    try:
+        content = path.read_text(encoding="utf-8-sig")
+    except FileNotFoundError:
+        return {}
+    except UnicodeError as error:
+        raise ValueError("CONFIG_INVALID") from error
+    except OSError as error:
+        raise ValueError("CONFIG_UNREADABLE") from error
+    try:
+        document = json.loads(content)
+    except json.JSONDecodeError as error:
+        raise ValueError("CONFIG_INVALID") from error
+    if not isinstance(document, dict):
+        raise ValueError("CONFIG_INVALID")
+    section = document.get("linux", {})
+    if not isinstance(section, dict):
+        raise ValueError("CONFIG_INVALID")
+    return section
+
+
+def apply_config(path=None):
+    """Aplicar config.json; las constantes quedan como respaldo si faltan claves."""
+    global PORT, BAUD, TIMEOUT_MS, DEFAULT_POWER
+    section = load_linux_config(path)
+    port = section.get("port", _FALLBACK_PORT)
+    baud = section.get("baudrate", _FALLBACK_BAUD)
+    timeout = section.get("timeout_ms", _FALLBACK_TIMEOUT_MS)
+    power = section.get("power", _FALLBACK_POWER)
+    if not isinstance(port, str) or not port.startswith("/") or any(c in port for c in "\r\n\x00"):
+        raise ValueError("CONFIG_INVALID")
+    if isinstance(baud, bool) or not isinstance(baud, int) or baud <= 0:
+        raise ValueError("CONFIG_INVALID")
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
+        raise ValueError("CONFIG_INVALID")
+    try:
+        power = normalize_power(power)
+    except ValueError as error:
+        raise ValueError("CONFIG_INVALID") from error
+    PORT = port
+    BAUD = baud
+    TIMEOUT_MS = timeout
+    DEFAULT_POWER = power
+
+
 def configured_power():
     # PHP guarda el ajuste confirmado; no modificar config.json ni este archivo.
     try:
         content = POWER_CONFIG_PATH.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return normalize_power(int(POWER_HEX, 16))
+        return DEFAULT_POWER
     except UnicodeError as error:
         raise ValueError("POWER_CONFIG_INVALID") from error
     except OSError as error:
@@ -494,6 +547,7 @@ def main(args=None):
         print("ERROR=EPC_REQUIRED")
         return 1
     try:
+        apply_config()
         if action == "set-power":
             if len(args) < 2:
                 raise ValueError("POWER_REQUIRED")
