@@ -278,7 +278,13 @@ function handleRequest(array $request, string $baseDir, bool $windows, callable 
     }
     $bridge = $baseDir . ($windows ? '/windows/OR2103Bridge.exe' : '/linux/OR2103Bridge.py');
     if (!is_file($bridge)) return failure($action, 'BRIDGE_NOT_FOUND', 'Bridge no encontrado: ' . $bridge);
-    $arguments = array_merge($windows ? [$bridge, $action] : ['python3', $bridge, $action], $params);
+    if ($windows) {
+        $arguments = array_merge([$bridge, $action], $params);
+    } else {
+        // install.sh instala pySerial para el Python del sistema; no depender del PATH de Apache.
+        $python = is_executable('/usr/bin/python3') ? '/usr/bin/python3' : 'python3';
+        $arguments = array_merge([$python, $bridge, $action], $params);
+    }
     try {
         if ($action === 'clear-verified' && function_exists('set_time_limit')) @set_time_limit(75);
         // El bloqueo cubre la respuesta del pad y el guardado: la siguiente lectura ve el nuevo valor.

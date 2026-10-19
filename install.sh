@@ -63,14 +63,24 @@ apache2ctl configtest
 if [[ $check_only == false ]]; then
     command -v apt-get >/dev/null 2>&1 || fail 'Se necesita APT para instalar las dependencias.'
     printf '%s\n' 'Instalando dependencias del bridge OR2103...'
-    apt-get update
+    # Un repositorio de terceros roto no debe impedir instalar con los indices disponibles.
+    apt-get update --allow-releaseinfo-change || \
+        printf 'Advertencia: apt-get update fallo; se intentara instalar con los indices disponibles.\n' >&2
     apt-get install -y python3 python3-serial php-cli curl
 fi
 
 for dependency in python3 php curl runuser; do
     command -v "$dependency" >/dev/null 2>&1 || fail "Falta $dependency. Ejecuta sudo bash install.sh."
 done
-python3 -c 'import serial' || fail 'Falta pySerial para el Python del sistema.'
+if [[ -x /usr/bin/python3 ]]; then
+    web_python=/usr/bin/python3
+else
+    web_python=$(runuser -u "$web_user" -- python3 -c 'import sys; print(sys.executable)') || \
+        fail "No se pudo ejecutar python3 como $web_user."
+fi
+runuser -u "$web_user" -- "$web_python" -c 'import serial' || \
+    fail "Falta pySerial para $web_user ($web_python). Instala python3-serial o revisa que PHP use ese Python."
+printf 'Python de PHP: %s (pySerial OK)\n' "$web_python"
 php -l "$project_dir/PADBridge.php"
 php -l "$project_dir/lib/Bridge.php"
 

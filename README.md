@@ -78,7 +78,9 @@ no elimina funciones ni cambia las llamadas de Marijoa.
 
 ## Qué hace el instalador
 
-- Instala `python3`, `python3-serial`, `php-cli` y `curl` mediante APT.
+- Instala `python3`, `python3-serial`, `php-cli` y `curl` mediante APT. Si
+  `apt-get update` falla por repositorios de terceros, intenta instalar con
+  los índices disponibles.
 - Utiliza el Apache y PHP existentes; no instala otro servidor web.
 - Agrega al grupo `dialout` al usuario que ejecuta PHP (`www-data` por defecto).
 - Comprueba la configuración de Apache y reinicia Apache y los servicios
@@ -88,7 +90,7 @@ no elimina funciones ni cambia las llamadas de Marijoa.
   de esta máquina. No da permisos de escritura sobre el resto del proyecto.
 - Lee `linux.port` de `config.json`; si no está disponible, detecta el CP2102
   y actualiza ese valor. Guarda un respaldo `config.json.install-backup`.
-- Comprueba archivos, dependencias y permisos del dispositivo como el usuario de PHP.
+- Comprueba archivos, pySerial y permisos del dispositivo como el usuario de PHP.
 - Comprueba que la URL del bridge devuelva JSON, sin enviar comandos al lector.
 
 Puede ejecutarse de nuevo. No escribe ni borra etiquetas, no aplica `chmod 666`
@@ -464,6 +466,8 @@ permisos CORS existentes.
 | `ERROR=UNKNOWN_ACTION` | Revisa el nombre de la acción; `status` e `inventory` están implementados. Actualiza si todavía usas una revisión anterior |
 | `ERROR=VERSION_NOT_SUPPORTED` | La consulta de versión del lector aún no está implementada en Linux |
 | `ERROR=CONFIG_INVALID` | Revisa `config.json`: `linux` debe ser un objeto con `port` absoluto y `baudrate`, `timeout_ms` y `power` válidos |
+| `ERROR=PYSERIAL_NOT_INSTALLED` | El Python que usa PHP no encuentra pySerial. El bridge usa `/usr/bin/python3` cuando existe. Comprueba con `sudo -u www-data /usr/bin/python3 -c 'import serial, sys; print(sys.executable, serial.__version__)'`. Si falla, ejecuta `sudo bash install.sh`; el stderr del JSON muestra el intérprete real con `PYTHON=...` |
+| El instalador se detiene al actualizar APT | Revisa claves GPG y PPAs de terceros. Para aceptar un cambio de etiqueta de un PPA: `sudo apt-get update --allow-releaseinfo-change`; si falla un repositorio ajeno al bridge, puedes deshabilitarlo temporalmente e instalar `python3-serial` |
 | `ERROR=READER_NOT_RESPONDING` o `ERROR=CONNECT_FAILED` | Revisa la conexión USB y el puerto configurado. Desenchufa el USB del lector, espera 10 segundos y vuelve a enchufarlo en modo USB. Comprueba la conexión y consulta la potencia o lee el EPC antes de repetir un cambio |
 | `ERROR=BRIDGE_BUSY` | Otra petición ocupa el bridge; espera a que termine antes de repetir |
 | `ERROR=BRIDGE_TIMEOUT` | El proceso excedió el límite; revisa puerto y lector. Antes de repetir una escritura, lee el EPC para saber si se aplicó |

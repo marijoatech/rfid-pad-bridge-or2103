@@ -564,6 +564,7 @@ def main(args=None):
                 raise ValueError("PALABRAS_INVALIDAS")
             words = int(args[1])
         if serial is None:
+            print("RFID_DIAG PYTHON=" + sys.executable + " PYSERIAL=missing", file=sys.stderr)
             print("ERROR=PYSERIAL_NOT_INSTALLED")
             return 1
         if action in ("status", "get-power"):

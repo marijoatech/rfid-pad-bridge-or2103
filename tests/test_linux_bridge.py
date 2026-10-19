@@ -4,6 +4,7 @@ import io
 import itertools
 import json
 import pathlib
+import sys
 import tempfile
 import types
 import unittest
@@ -158,6 +159,15 @@ class BridgeTests(unittest.TestCase):
         device = FakeSerial()
         self.assertEqual(self.invoke(["read-epc"], device)[0], 0)
         self.assertIn(bytes.fromhex("A501210F31"), device.writes)
+
+    def test_missing_pyserial_reports_interpreter_diagnostic(self):
+        output, diagnostics = io.StringIO(), io.StringIO()
+        with mock.patch.object(bridge, "serial", None), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(diagnostics):
+            code = bridge.main(["status"])
+        self.assertEqual((code, output.getvalue()), (1, "ERROR=PYSERIAL_NOT_INSTALLED\n"))
+        self.assertIn("PYTHON=" + sys.executable, diagnostics.getvalue())
+        self.assertIn("PYSERIAL=missing", diagnostics.getvalue())
 
     def test_power_response_fragmentation_and_noise(self):
         response = bytes.fromhex("A5 02 22 00 0A 2E")
