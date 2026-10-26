@@ -188,7 +188,8 @@ def diagnostic(cmd, reader, received_before=0, tags_before=0):
           " TAG_FRAMES=" + str(reader.tag_frames - tags_before), file=sys.stderr)
 
 
-def request_response(ser, cmd, data=b"", data_length=1, reader=None, on_tag=None):
+def request_response(ser, cmd, data=b"", data_length=1, reader=None, on_tag=None,
+                     diagnose=True):
     """Esperar ACK sin perder etiquetas recibidas junto a una respuesta.
 
     SDK OR2127LIB: longitud total = byte de longitud + 4. Un FrameReader
@@ -211,7 +212,8 @@ def request_response(ser, cmd, data=b"", data_length=1, reader=None, on_tag=None
             if frame[2] == cmd:
                 return response_data(frame, data_length)
     except Exception:
-        diagnostic(cmd, reader, received_before, tags_before)
+        if diagnose:
+            diagnostic(cmd, reader, received_before, tags_before)
         raise
 
 
@@ -324,6 +326,13 @@ def parse_epcs(buffer):
 
 
 def init_reader(ser, buzzer_off=True, power=None):
+    # Un inventario previo debe quedar detenido antes de cambiar la potencia.
+    try:
+        request_response(ser, 0x54, diagnose=False)
+    except ValueError as error:
+        # Un lector ya detenido puede responder con un estado en vez de ACK.
+        if not str(error).startswith("READER_STATUS_"):
+            raise
     power = configured_power() if power is None else normalize_power(power)
     send_hex(ser, "A5 00 32 32")          # get mode
     set_power(ser, power)                 # ACK + lectura verifican el ajuste persistido

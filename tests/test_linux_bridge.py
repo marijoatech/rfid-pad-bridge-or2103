@@ -169,6 +169,35 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("PYTHON=" + sys.executable, diagnostics.getvalue())
         self.assertIn("PYSERIAL=missing", diagnostics.getvalue())
 
+    def test_read_stops_active_inventory_before_power_change(self):
+        active = {"value": True}
+
+        def power_reply():
+            return [bridge.command(0x21, b"\x02" if active["value"] else b"\x00")]
+
+        def stop_reply():
+            active["value"] = False
+            return [ACK_STOP]
+
+        device = FakeSerial(replies={0x21: power_reply, 0x54: stop_reply,
+                                     0x53: [ACK_START + ZERO_FRAME]})
+        code, output, _ = self.invoke(["read-epc"], device)
+        self.assertEqual((code, output), (0, "DETECTED=" + "0" * 24 + "\n"))
+        self.assertFalse(active["value"])
+        self.assertIn(bytes.fromhex("A5 00 54 54"), device.writes)
+
+    def test_init_tolerates_stop_status_when_reader_is_idle(self):
+        stops = {"count": 0}
+
+        def stop_reply():
+            stops["count"] += 1
+            return [bridge.command(0x54, b"\x02" if stops["count"] == 1 else b"\x00")]
+
+        device = FakeSerial(replies={0x54: stop_reply, 0x53: [ACK_START + ZERO_FRAME]})
+        code, output, _ = self.invoke(["read-epc"], device)
+        self.assertEqual((code, output), (0, "DETECTED=" + "0" * 24 + "\n"))
+        self.assertEqual(self.last_stderr, "")
+
     def test_power_response_fragmentation_and_noise(self):
         response = bytes.fromhex("A5 02 22 00 0A 2E")
         device = FakeSerial(replies={0x22: [b"noise" + response[:2], response[2:4], response[4:]]})
@@ -342,7 +371,13 @@ class BridgeTests(unittest.TestCase):
 
     def test_stop_timeout_never_emits_detected_or_no_tag(self):
         for start in ([ACK_START], [ACK_START + ZERO_FRAME]):
-            device = FakeSerial(replies={0x53: start, 0x54: []})
+            stops = {"count": 0}
+
+            def stop_reply():
+                stops["count"] += 1
+                return [ACK_STOP] if stops["count"] == 1 else []
+
+            device = FakeSerial(replies={0x53: start, 0x54: stop_reply})
             self.assertEqual(self.invoke(["read-epc"], device)[:2], (1, "ERROR=READER_NOT_RESPONDING\n"))
             self.assertIn("CMD=54", self.last_stderr)
             self.assertNotIn(bytes.fromhex("A5001919"), device.writes)
@@ -351,7 +386,13 @@ class BridgeTests(unittest.TestCase):
     def test_stop_rejection_and_checksum_failure_never_emit_success(self):
         for ack, error in [(bridge.command(0x54, b"\x01"), "READER_STATUS_01"),
                            (ACK_STOP[:-1] + b"\x56", "READER_CHECKSUM")]:
-            device = FakeSerial(replies={0x53: [ACK_START + ZERO_FRAME], 0x54: [ack]})
+            stops = {"count": 0}
+
+            def stop_reply(ack=ack):
+                stops["count"] += 1
+                return [ACK_STOP] if stops["count"] == 1 else [ack]
+
+            device = FakeSerial(replies={0x53: [ACK_START + ZERO_FRAME], 0x54: stop_reply})
             self.assertEqual(self.invoke(["read-epc"], device)[:2], (1, "ERROR=" + error + "\n"))
             self.assertIn("CMD=54", self.last_stderr)
 
@@ -374,7 +415,7 @@ class BridgeTests(unittest.TestCase):
             device = FakeSerial(replies={0x53: [ACK_START + ZERO_FRAME]})
             self.assertEqual(self.invoke(args, device)[0], 0)
             self.assertFalse({0x13, 0x43, 0x51}.intersection(frame[2] for frame in device.writes))
-            self.assertEqual([frame[2] for frame in device.writes[:3]], [0x32, 0x21, 0x22])
+            self.assertEqual([frame[2] for frame in device.writes[:4]], [0x54, 0x32, 0x21, 0x22])
 
     def test_write_packet_and_output_are_unchanged(self):
         expected = bytes.fromhex("A5 15 57 00000000 01 01 07 3000 " + EPC + "CD")

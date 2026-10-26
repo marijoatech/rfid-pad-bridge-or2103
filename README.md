@@ -210,6 +210,11 @@ No desconectes el USB durante la petición: la restauración requiere que el lec
 siga conectado. Este parámetro solo se aplica a `read-epc`; otras peticiones del
 programa, como grabar o vaciar, mantienen su comportamiento de sonido.
 
+Antes de consultar el modo o cambiar la potencia, el bridge detiene cualquier
+inventario previo con el comando `0x54`. Si el lector quedó transmitiendo
+etiquetas, esto evita que rechace la configuración de potencia con
+`ERROR=READER_STATUS_02`.
+
 PHP coordina las peticiones de esta instalación mediante un bloqueo: espera
 hasta 5 segundos si otra operación está usando el bridge y devuelve
 `ERROR=BRIDGE_BUSY` si continúa ocupado. El proceso tiene un límite de 30
@@ -467,6 +472,7 @@ permisos CORS existentes.
 | `ERROR=VERSION_NOT_SUPPORTED` | La consulta de versión del lector aún no está implementada en Linux |
 | `ERROR=CONFIG_INVALID` | Revisa `config.json`: `linux` debe ser un objeto con `port` absoluto y `baudrate`, `timeout_ms` y `power` válidos |
 | `ERROR=PYSERIAL_NOT_INSTALLED` | El Python que usa PHP no encuentra pySerial. El bridge usa `/usr/bin/python3` cuando existe. Comprueba con `sudo -u www-data /usr/bin/python3 -c 'import serial, sys; print(sys.executable, serial.__version__)'`. Si falla, ejecuta `sudo bash install.sh`; el stderr del JSON muestra el intérprete real con `PYTHON=...` |
+| `ERROR=READER_STATUS_02` | El lector rechazó el comando, normalmente porque estaba inventariando. El bridge envía STOP antes de inicializar; si persiste, revisa el modelo/firmware y que el selector esté en USB |
 | El instalador se detiene al actualizar APT | Revisa claves GPG y PPAs de terceros. Para aceptar un cambio de etiqueta de un PPA: `sudo apt-get update --allow-releaseinfo-change`; si falla un repositorio ajeno al bridge, puedes deshabilitarlo temporalmente e instalar `python3-serial` |
 | `ERROR=READER_NOT_RESPONDING` o `ERROR=CONNECT_FAILED` | Revisa la conexión USB y el puerto configurado. Desenchufa el USB del lector, espera 10 segundos y vuelve a enchufarlo en modo USB. Comprueba la conexión y consulta la potencia o lee el EPC antes de repetir un cambio |
 | `ERROR=BRIDGE_BUSY` | Otra petición ocupa el bridge; espera a que termine antes de repetir |
